@@ -1,0 +1,17 @@
+# Liest einmal am Tag die Gegnerliste, damit das kostenlose Supabase-Projekt
+# als aktiv gilt und nicht pausiert wird. Ändert keine Daten.
+name: Datenbank wach halten
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+permissions: {}
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gegnerliste lesen
+        run: |
+          curl --fail --silent --show-error --max-time 30 \
+            -H "apikey: sb_publishable_NfTnvDBPAI35yoFoUTx5lg_KhHRl672" \
+            "https://afenxcqapfjstguzgauu.supabase.co/rest/v1/drv_opponents?select=id&limit=1"
