@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dota 2 Replay Viewer</title>
+<style>
+  :root {
+    --bg: #12161c; --panel: #1b212a; --line: #2c3540; --text: #e6e9ed; --muted: #8b96a3;
+    --radiant: #66bb6a; --dire: #ef5350; --obs: #f5c542; --sen: #4fa8f5; --accent: #5b9dff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 14px; }
+  h2 { font-size: 17px; margin: 0 0 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 16px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input[type=text] { flex: 1 1 220px; min-width: 0; padding: 10px 12px; font-size: 16px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; }
+  button { padding: 10px 16px; font-size: 15px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: #fff; font-weight: 600; }
+  button.secondary { background: var(--line); color: var(--text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+  .radiant { color: var(--radiant); } .dire { color: var(--dire); }
+  #status { margin-top: 10px; min-height: 1.4em; }
+  #status.error { color: var(--dire); }
+  [hidden] { display: none !important; }
+
+  .summary { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
+  .summary .score { font-size: 20px; font-weight: 700; }
+
+  /* Draft */
+  .draft-scroll { overflow-x: auto; padding-bottom: 6px; }
+  .draft { display: grid; grid-template-rows: auto auto auto; grid-auto-flow: column;
+    grid-auto-columns: 78px; gap: 6px 6px; width: max-content; }
+  .draft .rowlabel { position: sticky; left: 0; z-index: 1; background: var(--panel);
+    display: flex; align-items: center; font-weight: 700; padding-right: 8px; width: 78px; }
+  .draft .num { text-align: center; color: var(--muted); font-size: 12px; }
+  .slot { height: 74px; }
+  .card { border-radius: 6px; overflow: hidden; background: var(--bg); border: 2px solid var(--line);
+    height: 100%; display: flex; flex-direction: column; }
+  .card img { width: 100%; height: 42px; object-fit: cover; display: block; }
+  .card .cap { font-size: 11px; text-align: center; padding: 2px 2px 0; line-height: 1.25;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .kind { font-size: 10px; text-align: center; text-transform: uppercase; letter-spacing: .05em; }
+  .card.pick.radiant-b { border-color: var(--radiant); }
+  .card.pick.dire-b { border-color: var(--dire); }
+  .card.ban img { filter: grayscale(1) brightness(.55); }
+  .card.ban .kind { color: var(--muted); }
+  .card.pick .kind { color: var(--text); font-weight: 700; }
+
+  /* Wards */
+  .wards { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 860px) { .wards { grid-template-columns: 1fr; } }
+  .map { position: relative; width: 100%; aspect-ratio: 1; background: #000; border-radius: 8px;
+    overflow: hidden; user-select: none; }
+  .map img.bg { width: 100%; height: 100%; display: block; }
+  .pin { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
+    border: 2px solid; cursor: pointer; }
+  .pin.obs { background: var(--obs); } .pin.sen { background: var(--sen); }
+  .pin.radiant-b { border-color: #1b7a20; box-shadow: 0 0 0 1.5px var(--radiant); }
+  .pin.dire-b { border-color: #8c1512; box-shadow: 0 0 0 1.5px var(--dire); }
+  .pin span { position: absolute; top: 13px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; pointer-events: none;
+    text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 2px #000; }
+  .pin.hl { z-index: 5; outline: 3px solid #fff; outline-offset: 2px; }
+  .map.nolabels .pin span { display: none; }
+  .map.nolabels .pin.hl span { display: block; }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 10px 0; }
+  .controls label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+  .timebar { display: flex; gap: 10px; align-items: center; }
+  .timebar input { flex: 1; min-width: 0; }
+  #timeLabel { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 54px; text-align: right; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
+  .list { max-height: 640px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; }
+  td.t { font-variant-numeric: tabular-nums; font-weight: 700; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover, tbody tr.hl { background: #263040; }
+  tbody tr.off { opacity: .4; }
+  td img { height: 18px; vertical-align: -4px; margin-right: 6px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Dota 2 Replay Viewer</h1>
+
+  <div class="panel">
+    <form id="form">
+      <input id="matchInput" type="text" inputmode="numeric" autocomplete="off"
+             placeholder="Match-ID, z. B. 9088069727">
+      <button type="submit" id="loadBtn">Laden</button>
+    </form>
+    <div id="status" class="muted small">Match-ID eingeben. Die Daten kommen von OpenDota.</div>
+  </div>
+
+  <div id="result" hidden>
+    <div class="panel"><div class="summary" id="summary"></div></div>
+
+    <div class="panel">
+      <h2>Draft</h2>
+      <div id="draftNote" class="muted small" style="margin-bottom:10px"></div>
+      <div class="draft-scroll"><div class="draft" id="draft"></div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Wards</h2>
+      <div id="wardsEmpty" hidden>
+        <p class="muted">Für dieses Match gibt es noch keine Ward-Daten. Das Replay wurde von OpenDota
+          noch nicht ausgewertet.</p>
+        <button id="parseBtn" class="secondary">Auswertung bei OpenDota anfordern</button>
+        <span id="parseStatus" class="muted small"></span>
+      </div>
+      <div id="wardsBody" class="wards">
+        <div>
+          <div class="map" id="map"><img class="bg" id="mapImg" alt="Dota 2 Karte"></div>
+          <div class="controls timebar">
+            <input type="range" id="time" step="1">
+            <span id="timeLabel">0:00</span>
+          </div>
+          <div class="controls">
+            <label><input type="checkbox" id="showAll"> Alle Wards des Spiels</label>
+            <label><input type="checkbox" id="fObs" checked> Observer</label>
+            <label><input type="checkbox" id="fSen" checked> Sentry</label>
+            <label><input type="checkbox" id="fRad" checked> Radiant</label>
+            <label><input type="checkbox" id="fDire" checked> Dire</label>
+          </div>
+          <div class="legend small muted">
+            <span><span class="dot" style="background:var(--obs)"></span>Observer</span>
+            <span><span class="dot" style="background:var(--sen)"></span>Sentry</span>
+            <span><span class="dot" style="border:2px solid var(--radiant)"></span>Radiant</span>
+            <span><span class="dot" style="border:2px solid var(--dire)"></span>Dire</span>
+            <span>Zahl am Ward = Spielzeit beim Platzieren</span>
+          </div>
+        </div>
+        <div>
+          <div class="muted small" id="wardCount" style="margin-bottom:6px"></div>
+          <div class="list">
+            <table>
+              <thead><tr><th>Zeit</th><th>Held</th><th>Typ</th><th>Stand</th><th>Ende</th></tr></thead>
+              <tbody id="wardRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const API = 'https://api.opendota.com/api';
+const CDN = 'https://cdn.cloudflare.steamstatic.com';
+const MAP_BASE = 'https://www.opendota.com/assets/images/dota2/map/';
+// Kartenversionen, neueste zuerst: ab welchem Patch welches Bild gilt.
+const MAPS = [['7.40','detailed_740'],['7.38','detailed_738'],['7.33','detailed_733'],
+  ['7.32','detailed_732'],['7.23','detailed_723'],['7.20','detailed_720'],['7.07','detailed_707'],
+  ['7.00','detailed_700'],['6.86','detailed_686'],['6.82','detailed_682']];
+
+const $ = id => document.getElementById(id);
+let heroes = null, patches = null, state = null;
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function fmt(t) {
+  const s = Math.abs(Math.round(t));
+  return (t < 0 ? '-' : '') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (r.status === 404) throw new Error('Match nicht gefunden. Stimmt die ID, und ist das Match öffentlich?');
+  if (r.status === 429) throw new Error('OpenDota-Limit erreicht. Bitte in einer Minute noch einmal versuchen.');
+  if (!r.ok) throw new Error('OpenDota antwortet mit Fehler ' + r.status + '.');
+  return r.json();
+}
+async function loadConstants() {
+  if (!heroes) heroes = await getJSON(API + '/constants/heroes');
+  if (!patches) patches = await getJSON(API + '/constants/patch').catch(() => []);
+}
+const hero = id => heroes[id] || { localized_name: 'Held ' + id, img: '', icon: '' };
+
+function setStatus(text, isError) {
+  $('status').textContent = text;
+  $('status').className = isError ? 'error small' : 'muted small';
+}
+
+async function load(id) {
+  $('loadBtn').disabled = true;
+  setStatus('Lade Match ' + id + ' …');
+  try {
+    await loadConstants();
+    const m = await getJSON(API + '/matches/' + id);
+    if (!m || !m.players) throw new Error('Keine Daten für dieses Match.');
+    render(m);
+    history.replaceState(null, '', '?match=' + id);
+    setStatus('Match ' + id + ' geladen. Der Link in der Adresszeile lässt sich teilen.');
+  } catch (e) {
+    $('result').hidden = true;
+    setStatus(e.message || String(e), true);
+  } finally {
+    $('loadBtn').disabled = false;
+  }
+}
+
+function render(m) {
+  $('result').hidden = false;
+  renderSummary(m);
+  renderDraft(m);
+  renderWards(m);
+}
+
+function renderSummary(m) {
+  const s = $('summary');
+  s.replaceChildren();
+  const rad = (m.radiant_team && m.radiant_team.name) || m.radiant_name || 'Radiant';
+  const dire = (m.dire_team && m.dire_team.name) || m.dire_name || 'Dire';
+  const score = el('span', 'score');
+  score.append(el('span', 'radiant', rad + ' ' + (m.radiant_score ?? '')), ' : ',
+               el('span', 'dire', (m.dire_score ?? '') + ' ' + dire));
+  s.append(score);
+  s.append(el('span', m.radiant_win ? 'radiant' : 'dire', 'Sieg: ' + (m.radiant_win ? rad : dire)));
+  s.append(el('span', 'muted', 'Dauer ' + fmt(m.duration || 0)));
+  if (m.start_time) s.append(el('span', 'muted', new Date(m.start_time * 1000).toLocaleString('de-DE',
+    { dateStyle: 'medium', timeStyle: 'short' })));
+  if (m.league && m.league.name) s.append(el('span', 'muted', m.league.name));
+}
+
+function renderDraft(m) {
+  const d = $('draft');
+  d.replaceChildren();
+  const pb = (m.picks_bans || []).slice().sort((a, b) => a.order - b.order);
+  if (!pb.length) {
+    $('draftNote').textContent = 'Für dieses Match liefert OpenDota keine Pick- und Ban-Daten.';
+    return;
+  }
+  const timings = {};
+  (m.draft_timings || []).forEach(t => { timings[t.order] = t; });
+  const hasTimes = Object.keys(timings).length > 0;
+  // picks_bans zählt ab 0, draft_timings je nach Match ab 0 oder 1.
+  const timingBase = hasTimes ? Math.min(...Object.keys(timings).map(Number)) - pb[0].order : 0;
+  $('draftNote').textContent = hasTimes
+    ? 'Reihenfolge von links nach rechts. Unter jedem Helden steht die benötigte Bedenkzeit.'
+    : 'Reihenfolge von links nach rechts. Uhrzeiten für die einzelnen Picks und Bans liefert OpenDota für dieses Match nicht, deshalb steht hier die Position im Draft.';
+
+  d.append(el('div', 'rowlabel muted small', 'Nr.'), el('div', 'rowlabel radiant', 'Radiant'),
+           el('div', 'rowlabel dire', 'Dire'));
+  pb.forEach((p, i) => {
+    const h = hero(p.hero_id);
+    const t = timings[p.order + timingBase];
+    d.append(el('div', 'num', '#' + (i + 1)));
+    const card = el('div', 'card ' + (p.is_pick ? 'pick ' : 'ban ') + (p.team === 0 ? 'radiant-b' : 'dire-b'));
+    card.title = h.localized_name + ' – ' + (p.is_pick ? 'Pick' : 'Ban') + ' #' + (i + 1);
+    if (h.img) { const img = el('img'); img.src = CDN + h.img; img.alt = ''; img.loading = 'lazy'; card.append(img); }
+    card.append(el('div', 'cap', h.localized_name));
+    let kind = p.is_pick ? 'Pick' : 'Ban';
+    if (t && t.total_time_taken != null) kind += ' · ' + t.total_time_taken + 's';
+    card.append(el('div', 'kind', kind));
+    const filled = el('div', 'slot'); filled.append(card);
+    const empty = el('div', 'slot');
+    if (p.team === 0) d.append(filled, empty); else d.append(empty, filled);
+  });
+}
+
+function buildWards(m) {
+  const list = [];
+  for (const p of m.players) {
+    const radiant = p.player_slot < 128;
+    for (const [type, log, leftLog] of [['obs', p.obs_log, p.obs_left_log], ['sen', p.sen_log, p.sen_left_log]]) {
+      const left = {};
+      (leftLog || []).forEach(l => { left[l.ehandle] = l; });
+      (log || []).forEach(w => {
+        const l = left[w.ehandle];
+        list.push({ type, time: w.time, x: w.x, y: w.y, radiant, heroId: p.hero_id,
+          end: l ? l.time : null,
+          killer: l && l.attackername ? l.attackername : null });
+      });
+    }
+  }
+  return list.sort((a, b) => a.time - b.time);
+}
+
+function mapFile(m) {
+  const p = patches && patches.find(x => x.id === m.patch);
+  const v = p ? parseFloat(p.name) : 99;
+  const hit = MAPS.find(([name]) => v >= parseFloat(name));
+  return MAP_BASE + (hit ? hit[1] : 'detailed_pre682') + '.jpg';
+}
+
+function renderWards(m) {
+  const parsed = m.players.some(p => Array.isArray(p.obs_log));
+  $('wardsEmpty').hidden = parsed;
+  $('wardsBody').hidden = !parsed;
+  $('parseStatus').textContent = '';
+  $('parseBtn').disabled = false;
+  state = { m, wards: parsed ? buildWards(m) : [], hl: null };
+  if (!parsed) return;
+
+  $('mapImg').src = mapFile(m);
+  const t = $('time');
+  const first = state.wards.length ? state.wards[0].time : 0;
+  t.min = Math.min(-90, first);
+  t.max = m.duration || 3600;
+  t.value = 0;
+
+  const map = $('map');
+  map.querySelectorAll('.pin').forEach(p => p.remove());
+  const rows = $('wardRows');
+  rows.replaceChildren();
+  const killerName = k => {
+    const h = Object.values(heroes).find(x => x.name === k);
+    return h ? h.localized_name : k.replace('npc_dota_', '');
+  };
+
+  state.wards.forEach((w, i) => {
+    const pin = el('div', 'pin ' + w.type + (w.radiant ? ' radiant-b' : ' dire-b'));
+    pin.style.left = ((w.x - 64) / 127 * 100) + '%';
+    pin.style.top = ((127 - (w.y - 64)) / 127 * 100) + '%';
+    const h = hero(w.heroId);
+    const typeName = w.type === 'obs' ? 'Observer' : 'Sentry';
+    pin.title = fmt(w.time) + ' · ' + typeName + ' · ' + h.localized_name;
+    pin.append(el('span', null, fmt(w.time)));
+    pin.addEventListener('click', () => select(i, false));
+    map.append(pin);
+    w.pin = pin;
+
+    const tr = el('tr');
+    tr.append(el('td', 't ' + (w.radiant ? 'radiant' : 'dire'), fmt(w.time)));
+    const td = el('td');
+    if (h.icon) { const img = el('img'); img.src = CDN + h.icon; img.alt = ''; img.loading = 'lazy'; td.append(img); }
+    td.append(h.localized_name);
+    tr.append(td, el('td', null, typeName));
+    const life = (w.end != null ? w.end : (m.duration || w.time)) - w.time;
+    tr.append(el('td', null, fmt(life)));
+    let endText = 'bis Spielende';
+    if (w.end != null) endText = fmt(w.end) + (w.killer ? ' · zerstört von ' + killerName(w.killer) : ' · abgelaufen');
+    tr.append(el('td', 'muted', endText));
+    tr.addEventListener('click', () => select(i, true));
+    rows.append(tr);
+    w.row = tr;
+  });
+  update();
+}
+
+function select(i, jump) {
+  state.hl = i;
+  const w = state.wards[i];
+  if (jump && !$('showAll').checked) $('time').value = w.time;
+  update();
+  if (!jump) w.row.scrollIntoView({ block: 'nearest' });
+}
+
+function update() {
+  if (!state) return;
+  const t = Number($('time').value);
+  const all = $('showAll').checked;
+  $('time').disabled = all;
+  $('timeLabel').textContent = all ? 'alle' : fmt(t);
+  const dur = state.m.duration || Infinity;
+  let shown = 0;
+  state.wards.forEach((w, i) => {
+    const typeOk = w.type === 'obs' ? $('fObs').checked : $('fSen').checked;
+    const teamOk = w.radiant ? $('fRad').checked : $('fDire').checked;
+    const active = all || (w.time <= t && t < (w.end != null ? w.end : dur + 1));
+    const vis = typeOk && teamOk && active;
+    w.pin.hidden = !vis;
+    w.pin.classList.toggle('hl', state.hl === i);
+    w.row.hidden = !(typeOk && teamOk);
+    w.row.classList.toggle('off', !vis);
+    w.row.classList.toggle('hl', state.hl === i);
+    if (vis) shown++;
+  });
+  $('map').classList.toggle('nolabels', shown > 40);
+  $('wardCount').textContent = all
+    ? shown + ' Wards im ganzen Spiel. Zeile anklicken, um den Ward auf der Karte zu markieren.'
+    : shown + ' Wards aktiv bei ' + fmt(t) + '. Zeile anklicken, um zu diesem Zeitpunkt zu springen.';
+}
+
+['time', 'showAll', 'fObs', 'fSen', 'fRad', 'fDire'].forEach(id => $(id).addEventListener('input', update));
+
+$('form').addEventListener('submit', e => {
+  e.preventDefault();
+  const hit = $('matchInput').value.match(/\d{6,}/);
+  if (!hit) return setStatus('Bitte eine gültige Match-ID eingeben (nur Ziffern).', true);
+  $('matchInput').value = hit[0];
+  load(hit[0]);
+});
+
+$('parseBtn').addEventListener('click', async () => {
+  $('parseBtn').disabled = true;
+  $('parseStatus').textContent = ' Anfrage läuft …';
+  try {
+    const r = await fetch(API + '/request/' + state.m.match_id, { method: 'POST' });
+    if (!r.ok) throw new Error(r.status);
+    $('parseStatus').textContent = ' Angefordert. Das dauert meist ein paar Minuten, danach das Match neu laden.';
+  } catch (e) {
+    $('parseStatus').textContent = ' Anforderung fehlgeschlagen (' + e.message + ').';
+    $('parseBtn').disabled = false;
+  }
+});
+
+const initial = new URLSearchParams(location.search).get('match');
+if (initial && /^\d{6,}$/.test(initial)) { $('matchInput').value = initial; load(initial); }
+</script>
+</body>
+</html>
