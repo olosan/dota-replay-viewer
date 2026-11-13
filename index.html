@@ -19,9 +19,9 @@
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     padding: 16px; margin-bottom: 16px; }
   form, .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  input[type=text], select { padding: 10px 12px; font-size: 16px; min-width: 0;
+  input[type=text], input[type=password], select { padding: 10px 12px; font-size: 16px; min-width: 0;
     background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; }
-  input[type=text] { flex: 1 1 220px; }
+  input[type=text], input[type=password] { flex: 1 1 220px; }
   select.compact { padding: 5px 8px; font-size: 13px; max-width: 240px; }
   button { padding: 10px 16px; font-size: 15px; border: 0; border-radius: 8px; cursor: pointer;
     background: var(--accent); color: #fff; font-weight: 600; }
@@ -186,7 +186,16 @@
 
   <!-- ===================== Gegner ===================== -->
   <section id="tab-opp" hidden>
-    <div class="panel">
+    <div class="panel" id="oppLogin" hidden>
+      <h2>Team-Bereich öffnen</h2>
+      <form id="oppLoginForm">
+        <input id="oppPassInput" type="password" autocomplete="current-password"
+               placeholder="Passwort des Team-Bereichs" aria-label="Passwort des Team-Bereichs">
+        <button type="submit">Öffnen</button>
+      </form>
+      <div id="oppLoginStatus" class="status muted small"></div>
+    </div>
+    <div class="panel" id="oppMain">
       <div class="bar">
         <select id="oppSelect" aria-label="Gegner auswählen"></select>
         <button id="oppNew">Neuer Gegner</button>
@@ -194,6 +203,7 @@
         <button id="oppShare" class="secondary">Link teilen</button>
         <button id="oppDelete" class="secondary">Löschen</button>
         <button id="oppUpload" class="secondary" hidden></button>
+        <button id="oppLogout" class="secondary" hidden>Bereich wechseln</button>
       </div>
       <div id="oppStatus" class="status muted small"></div>
     </div>
@@ -410,12 +420,8 @@ async function remote(path, opts) {
   return text ? JSON.parse(text) : null;
 }
 function getPass() {
-  let p = store.get('drv.pass');
-  if (!p) {
-    p = (prompt('Passwort zum Bearbeiten der gemeinsamen Gegner:') || '').trim();
-    if (!p) throw new Error('Ohne Passwort kann nichts geändert werden.');
-    store.set('drv.pass', p);
-  }
+  const p = store.get('drv.pass');
+  if (!p) throw new Error('Bitte zuerst das Passwort des Team-Bereichs eingeben.');
   return p;
 }
 async function rpc(name, body) {
@@ -642,16 +648,19 @@ let oppData = null;     // berechnete Statistik des aktuellen Gegners
 let oppLoadToken = 0;
 const saveLocal = () => { if (!SHARED) store.set('drv.opps', opps); store.set('drv.cur', curId); };
 const cleanRow = r => ({ id: r.id, name: r.name, matches: Array.isArray(r.matches) ? r.matches : [] });
+let spaceName = '';
 async function syncOpps() {
   if (!SHARED) return;
-  opps = (await remote('drv_opponents?select=id,name,matches&order=name')).map(cleanRow);
+  const d = await rpc('drv_list', {});
+  spaceName = d.space || '';
+  opps = (d.opponents || []).map(cleanRow);
 }
 /* Eine Änderung an einem Gegner speichern. In der gemeinsamen Datenbank wird vorher der aktuelle
    Stand geholt, damit gleichzeitige Änderungen von anderen nicht überschrieben werden. */
 async function mutate(o, fn) {
   if (SHARED) {
-    const rows = await remote('drv_opponents?select=id,name,matches&id=eq.' + encodeURIComponent(o.id));
-    if (rows && rows[0]) Object.assign(o, cleanRow(rows[0]));
+    const row = ((await rpc('drv_list', {})).opponents || []).find(r => r.id === o.id);
+    if (row) Object.assign(o, cleanRow(row));
     fn(o);
     await rpc('drv_save', { p_id: o.id, p_name: o.name, p_matches: o.matches });
   } else fn(o);
@@ -661,7 +670,10 @@ async function change(o, fn) {
   try { await mutate(o, fn); return true; }
   catch (e) {
     setStatus('oppStatus', 'Nicht gespeichert: ' + e.message, true);
-    if (SHARED) await syncOpps().catch(() => {});
+    if (SHARED) {
+      await syncOpps().catch(() => {});
+      if (!store.get('drv.pass')) showLogin('Das Passwort stimmt nicht mehr. Bitte neu eingeben.');
+    }
     return false;
   } finally {
     // Sind durch andere neue Matches dazugekommen, müssen sie erst geladen werden.
@@ -671,9 +683,14 @@ async function change(o, fn) {
     else computeOpp();
   }
 }
-const OPP_HINT = SHARED
-  ? 'Die Gegner sind für alle Besucher gleich. Zum Ändern braucht man das gemeinsame Passwort.'
+const oppHint = () => SHARED
+  ? 'Team-Bereich „' + spaceName + '“. Alle mit diesem Passwort sehen und bearbeiten dieselben Gegner.'
   : 'Gegner werden nur in diesem Browser gespeichert. Mit „Link teilen“ bekommen Freunde denselben Gegner mit allen Matches.';
+const LOGIN_HINT = 'Jedes Team hat ein eigenes Passwort und sieht damit nur seine eigenen Gegner.';
+function showLogin(message) {
+  $('oppLogin').hidden = false; $('oppMain').hidden = true; $('oppBody').hidden = true;
+  setStatus('oppLoginStatus', message || LOGIN_HINT, !!message);
+}
 const curOpp = () => opps.find(o => o.id === curId) || null;
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -697,9 +714,17 @@ function renderOppSelect() {
 }
 
 async function openOpp() {
+  $('oppLogout').hidden = !SHARED;
   if (SHARED) {
-    try { await syncOpps(); setStatus('oppStatus', OPP_HINT); }
-    catch (e) { setStatus('oppStatus', 'Gegner konnten nicht geladen werden: ' + e.message, true); }
+    if (!store.get('drv.pass')) return showLogin();
+    try { await syncOpps(); }
+    catch (e) {
+      if (!store.get('drv.pass')) return showLogin('Passwort falsch.');
+      $('oppLogin').hidden = true; $('oppMain').hidden = false;
+      return setStatus('oppStatus', 'Gegner konnten nicht geladen werden: ' + e.message, true);
+    }
+    $('oppLogin').hidden = true; $('oppMain').hidden = false;
+    setStatus('oppStatus', oppHint());
   }
   renderOppSelect();
   const o = curOpp();
@@ -1021,6 +1046,19 @@ $('oppDelete').addEventListener('click', async () => {
   catch (e) { return setStatus('oppStatus', 'Nicht gelöscht: ' + e.message, true); }
   opps = opps.filter(x => x.id !== o.id); curId = opps.length ? opps[0].id : null; saveLocal(); openOpp();
 });
+$('oppLoginForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const p = $('oppPassInput').value.trim();
+  if (!p) return;
+  $('oppPassInput').value = '';
+  store.set('drv.pass', p);
+  setStatus('oppLoginStatus', 'Prüfe Passwort …');
+  openOpp();
+});
+$('oppLogout').addEventListener('click', () => {
+  store.del('drv.pass'); opps = []; oppData = null; spaceName = '';
+  openOpp();
+});
 $('oppUpload').addEventListener('click', async () => {
   const local = store.get('drv.opps') || [];
   if (!confirm(local.length + ' Gegner aus diesem Browser in die gemeinsame Datenbank hochladen?')) return;
@@ -1031,7 +1069,7 @@ $('oppUpload').addEventListener('click', async () => {
     if (!ok) return;
   }
   store.del('drv.opps');
-  setStatus('oppStatus', 'Hochgeladen. ' + OPP_HINT);
+  setStatus('oppStatus', 'Hochgeladen. ' + oppHint());
   openOpp();
 });
 
@@ -1081,7 +1119,7 @@ $('oppAddForm').addEventListener('submit', async e => {
 
 /* ---------- Start ---------- */
 (async function init() {
-  setStatus('oppStatus', OPP_HINT);
+  setStatus('oppStatus', oppHint());
   const q = new URLSearchParams(location.search);
   const imp = q.get('import');
   if (imp) {
@@ -1103,7 +1141,9 @@ $('oppAddForm').addEventListener('submit', async e => {
   }
   const initial = q.get('match');
   if (initial && /^\d{6,}$/.test(initial)) { $('matchInput').value = initial; showTab('match'); return load(initial); }
-  showTab(store.get('drv.tab') === 'opp' ? 'opp' : 'match');
+  // Mit Team-Bereichen startet die Seite bei der Passwort-Abfrage bzw. im eigenen Bereich.
+  const saved = store.get('drv.tab');
+  showTab(saved === 'opp' || (SHARED && saved !== 'match') ? 'opp' : 'match');
 })();
 </script>
 </body>
