@@ -15,21 +15,29 @@
   main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
   h1 { font-size: 22px; margin: 0 0 14px; }
   h2 { font-size: 17px; margin: 0 0 12px; }
+  h3 { font-size: 14px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     padding: 16px; margin-bottom: 16px; }
-  form { display: flex; gap: 8px; flex-wrap: wrap; }
-  input[type=text] { flex: 1 1 220px; min-width: 0; padding: 10px 12px; font-size: 16px;
+  form, .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input[type=text], select { padding: 10px 12px; font-size: 16px; min-width: 0;
     background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; }
+  input[type=text] { flex: 1 1 220px; }
+  select.compact { padding: 5px 8px; font-size: 13px; max-width: 240px; }
   button { padding: 10px 16px; font-size: 15px; border: 0; border-radius: 8px; cursor: pointer;
     background: var(--accent); color: #fff; font-weight: 600; }
   button.secondary { background: var(--line); color: var(--text); }
+  button.mini { padding: 4px 9px; font-size: 12px; }
   button:disabled { opacity: .5; cursor: default; }
   .muted { color: var(--muted); }
   .small { font-size: 13px; }
   .radiant { color: var(--radiant); } .dire { color: var(--dire); }
-  #status { margin-top: 10px; min-height: 1.4em; }
-  #status.error { color: var(--dire); }
+  .status { margin-top: 10px; min-height: 1.4em; }
+  .status.error { color: var(--dire); }
   [hidden] { display: none !important; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tabs button { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
+  .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
   .summary { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
   .summary .score { font-size: 20px; font-weight: 700; }
@@ -54,7 +62,7 @@
   .card.ban .kind { color: var(--muted); }
   .card.pick .kind { color: var(--text); font-weight: 700; }
 
-  /* Wards */
+  /* Karte */
   .wards { display: grid; grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: 16px; }
   @media (max-width: 860px) { .wards { grid-template-columns: 1fr; } }
   .map { position: relative; width: 100%; aspect-ratio: 1; background: #000; border-radius: 8px;
@@ -62,15 +70,18 @@
   .map img.bg { width: 100%; height: 100%; display: block; }
   .pin { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%;
     border: 2px solid; cursor: pointer; }
-  .pin.obs { background: var(--obs); } .pin.sen { background: var(--sen); }
+  .pin.obs, .spot.obs { background: var(--obs); } .pin.sen, .spot.sen { background: var(--sen); }
   .pin.radiant-b { border-color: #1b7a20; box-shadow: 0 0 0 1.5px var(--radiant); }
   .pin.dire-b { border-color: #8c1512; box-shadow: 0 0 0 1.5px var(--dire); }
   .pin span { position: absolute; top: 13px; left: 50%; transform: translateX(-50%);
     font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; pointer-events: none;
     text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 2px #000; }
-  .pin.hl { z-index: 5; outline: 3px solid #fff; outline-offset: 2px; }
+  .pin.hl, .spot.hl { z-index: 5; outline: 3px solid #fff; outline-offset: 2px; }
   .map.nolabels .pin span { display: none; }
   .map.nolabels .pin.hl span { display: block; }
+  .spot { position: absolute; border-radius: 50%; transform: translate(-50%, -50%);
+    border: 2px solid rgba(0,0,0,.75); display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; color: #111; cursor: pointer; opacity: .9; }
   .controls { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 10px 0; }
   .controls label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
   .timebar { display: flex; gap: 10px; align-items: center; }
@@ -78,81 +89,199 @@
   #timeLabel { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 54px; text-align: right; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
-  .list { max-height: 640px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+
+  /* Tabellen */
+  .list { max-height: 640px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .list.short { max-height: 360px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; }
-  td.t { font-variant-numeric: tabular-nums; font-weight: 700; }
-  tbody tr { cursor: pointer; }
-  tbody tr:hover, tbody tr.hl { background: #263040; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; z-index: 1; }
+  td.t, td.num { font-variant-numeric: tabular-nums; font-weight: 700; }
+  tr.click { cursor: pointer; }
+  tr.click:hover, tbody tr.hl { background: #263040; }
   tbody tr.off { opacity: .4; }
-  td img { height: 18px; vertical-align: -4px; margin-right: 6px; border-radius: 2px; }
+  td img, .chip img { height: 18px; vertical-align: -4px; margin-right: 6px; border-radius: 2px; }
+  td.wrap { white-space: normal; }
+  .chip { display: inline-block; background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
+    padding: 1px 8px 1px 4px; margin: 2px 4px 2px 0; font-size: 12px; white-space: nowrap; }
+  .chip img { margin-right: 4px; }
+  .cols3 { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .cols3 { grid-template-columns: 1fr; } }
+  .cols3 > div, .wards > div { min-width: 0; }
+  .warn { color: var(--obs); }
 </style>
 </head>
 <body>
 <main>
   <h1>Dota 2 Replay Viewer</h1>
 
-  <div class="panel">
-    <form id="form">
-      <input id="matchInput" type="text" inputmode="numeric" autocomplete="off"
-             placeholder="Match-ID, z. B. 9088069727">
-      <button type="submit" id="loadBtn">Laden</button>
-    </form>
-    <div id="status" class="muted small">Match-ID eingeben. Die Daten kommen von OpenDota.</div>
-  </div>
+  <nav class="tabs">
+    <button data-tab="match" class="on">Einzelnes Match</button>
+    <button data-tab="opp">Gegner</button>
+  </nav>
 
-  <div id="result" hidden>
-    <div class="panel"><div class="summary" id="summary"></div></div>
-
+  <!-- ===================== Einzelnes Match ===================== -->
+  <section id="tab-match">
     <div class="panel">
-      <h2>Draft</h2>
-      <div id="draftNote" class="muted small" style="margin-bottom:10px"></div>
-      <div class="draft-scroll"><div class="draft" id="draft"></div></div>
+      <form id="form">
+        <input id="matchInput" type="text" inputmode="numeric" autocomplete="off"
+               placeholder="Match-ID, z. B. 9088069727">
+        <button type="submit" id="loadBtn">Laden</button>
+      </form>
+      <div id="status" class="status muted small">Match-ID eingeben. Die Daten kommen von OpenDota.</div>
     </div>
 
-    <div class="panel">
-      <h2>Wards</h2>
-      <div id="wardsEmpty" hidden>
-        <p class="muted">Für dieses Match gibt es noch keine Ward-Daten. Das Replay wurde von OpenDota
-          noch nicht ausgewertet.</p>
-        <button id="parseBtn" class="secondary">Auswertung bei OpenDota anfordern</button>
-        <span id="parseStatus" class="muted small"></span>
+    <div id="result" hidden>
+      <div class="panel"><div class="summary" id="summary"></div></div>
+
+      <div class="panel">
+        <h2>Draft</h2>
+        <div id="draftNote" class="muted small" style="margin-bottom:10px"></div>
+        <div class="draft-scroll"><div class="draft" id="draft"></div></div>
       </div>
-      <div id="wardsBody" class="wards">
-        <div>
-          <div class="map" id="map"><img class="bg" id="mapImg" alt="Dota 2 Karte"></div>
-          <div class="controls timebar">
-            <input type="range" id="time" step="1">
-            <span id="timeLabel">0:00</span>
-          </div>
-          <div class="controls">
-            <label><input type="checkbox" id="showAll"> Alle Wards des Spiels</label>
-            <label><input type="checkbox" id="fObs" checked> Observer</label>
-            <label><input type="checkbox" id="fSen" checked> Sentry</label>
-            <label><input type="checkbox" id="fRad" checked> Radiant</label>
-            <label><input type="checkbox" id="fDire" checked> Dire</label>
-          </div>
-          <div class="legend small muted">
-            <span><span class="dot" style="background:var(--obs)"></span>Observer</span>
-            <span><span class="dot" style="background:var(--sen)"></span>Sentry</span>
-            <span><span class="dot" style="border:2px solid var(--radiant)"></span>Radiant</span>
-            <span><span class="dot" style="border:2px solid var(--dire)"></span>Dire</span>
-            <span>Zahl am Ward = Spielzeit beim Platzieren</span>
-          </div>
+
+      <div class="panel">
+        <h2>Wards</h2>
+        <div id="wardsEmpty" hidden>
+          <p class="muted">Für dieses Match gibt es noch keine Ward-Daten. Das Replay wurde von OpenDota
+            noch nicht ausgewertet.</p>
+          <button id="parseBtn" class="secondary">Auswertung bei OpenDota anfordern</button>
+          <span id="parseStatus" class="muted small"></span>
         </div>
-        <div>
-          <div class="muted small" id="wardCount" style="margin-bottom:6px"></div>
-          <div class="list">
-            <table>
-              <thead><tr><th>Zeit</th><th>Held</th><th>Typ</th><th>Stand</th><th>Ende</th></tr></thead>
-              <tbody id="wardRows"></tbody>
-            </table>
+        <div id="wardsBody" class="wards">
+          <div>
+            <div class="map" id="map"><img class="bg" id="mapImg" alt="Dota 2 Karte"></div>
+            <div class="controls timebar">
+              <input type="range" id="time" step="1">
+              <span id="timeLabel">0:00</span>
+            </div>
+            <div class="controls">
+              <label><input type="checkbox" id="showAll"> Alle Wards des Spiels</label>
+              <label><input type="checkbox" id="fObs" checked> Observer</label>
+              <label><input type="checkbox" id="fSen" checked> Sentry</label>
+              <label><input type="checkbox" id="fRad" checked> Radiant</label>
+              <label><input type="checkbox" id="fDire" checked> Dire</label>
+            </div>
+            <div class="legend small muted">
+              <span><span class="dot" style="background:var(--obs)"></span>Observer</span>
+              <span><span class="dot" style="background:var(--sen)"></span>Sentry</span>
+              <span><span class="dot" style="border:2px solid var(--radiant)"></span>Radiant</span>
+              <span><span class="dot" style="border:2px solid var(--dire)"></span>Dire</span>
+              <span>Zahl am Ward = Spielzeit beim Platzieren</span>
+            </div>
+          </div>
+          <div>
+            <div class="muted small" id="wardCount" style="margin-bottom:6px"></div>
+            <div class="list">
+              <table>
+                <thead><tr><th>Zeit</th><th>Held</th><th>Typ</th><th>Stand</th><th>Ende</th></tr></thead>
+                <tbody id="wardRows"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
+  </section>
+
+  <!-- ===================== Gegner ===================== -->
+  <section id="tab-opp" hidden>
+    <div class="panel">
+      <div class="bar">
+        <select id="oppSelect" aria-label="Gegner auswählen"></select>
+        <button id="oppNew">Neuer Gegner</button>
+        <button id="oppRename" class="secondary">Umbenennen</button>
+        <button id="oppShare" class="secondary">Link teilen</button>
+        <button id="oppDelete" class="secondary">Löschen</button>
+      </div>
+      <div id="oppStatus" class="status muted small">Gegner werden nur in diesem Browser gespeichert.
+        Mit „Link teilen“ bekommen Freunde denselben Gegner mit allen Matches.</div>
+    </div>
+
+    <div id="oppBody" hidden>
+      <div class="panel">
+        <h2>Matches</h2>
+        <form id="oppAddForm">
+          <input id="oppAddInput" type="text" autocomplete="off"
+                 placeholder="Eine oder mehrere Match-IDs, getrennt durch Leerzeichen oder Komma">
+          <button type="submit" id="oppAddBtn">Hinzufügen</button>
+        </form>
+        <div id="oppAddStatus" class="status muted small"></div>
+        <div class="list short">
+          <table>
+            <thead><tr><th>Datum</th><th>Begegnung</th><th>Gegner spielt als</th><th>Ergebnis</th>
+              <th>Wards</th><th></th></tr></thead>
+            <tbody id="oppMatchRows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Helden</h2>
+        <div class="cols3">
+          <div><h3>Gespielt</h3><div class="list short"><table>
+            <thead><tr><th>Held</th><th>Spiele</th><th>Siege</th><th>Quote</th><th>Gespielt von</th></tr></thead>
+            <tbody id="oppHeroRows"></tbody></table></div></div>
+          <div><h3>Bannt der Gegner</h3><div class="list short"><table>
+            <thead><tr><th>Held</th><th>Bans</th></tr></thead>
+            <tbody id="oppBanByRows"></tbody></table></div></div>
+          <div><h3>Wird gegen ihn gebannt</h3><div class="list short"><table>
+            <thead><tr><th>Held</th><th>Bans</th></tr></thead>
+            <tbody id="oppBanVsRows"></tbody></table></div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Spieler</h2>
+        <div id="oppPlayerNote" class="muted small" style="margin-bottom:8px"></div>
+        <div class="list"><table>
+          <thead><tr><th>Spieler</th><th>Spiele</th><th>Siege</th><th>Helden (Spiele · Siege)</th></tr></thead>
+          <tbody id="oppPlayerRows"></tbody></table></div>
+      </div>
+
+      <div class="panel">
+        <h2>Wards</h2>
+        <div class="wards">
+          <div>
+            <div class="map" id="oppMap"><img class="bg" id="oppMapImg" alt="Dota 2 Karte"></div>
+            <div class="controls">
+              <select id="owMode" class="compact" aria-label="Darstellung">
+                <option value="spots">Häufige Stellen</option>
+                <option value="pins">Einzelne Wards mit Zeit</option>
+              </select>
+              <select id="owSide" class="compact" aria-label="Seite">
+                <option value="a">Beide Seiten</option>
+                <option value="r">Nur als Radiant</option>
+                <option value="d">Nur als Dire</option>
+              </select>
+              <select id="owTime" class="compact" aria-label="Zeitfenster">
+                <option value="all">Ganzes Spiel</option>
+                <option value="pre">Vor 0:00</option>
+                <option value="early">0:00 – 10:00</option>
+                <option value="mid">10:00 – 20:00</option>
+                <option value="late">20:00 – 35:00</option>
+                <option value="end">Ab 35:00</option>
+              </select>
+              <label><input type="checkbox" id="owObs" checked> Observer</label>
+              <label><input type="checkbox" id="owSen"> Sentry</label>
+            </div>
+            <div class="legend small muted">
+              <span><span class="dot" style="background:var(--obs)"></span>Observer</span>
+              <span><span class="dot" style="background:var(--sen)"></span>Sentry</span>
+              <span>Zahl im Kreis = Anzahl Wards an dieser Stelle</span>
+            </div>
+          </div>
+          <div>
+            <div class="muted small" id="owCount" style="margin-bottom:6px"></div>
+            <div class="list"><table>
+              <thead><tr><th>#</th><th>Typ</th><th>Wards</th><th>In Matches</th><th>Typische Zeit</th>
+                <th>Früheste – späteste</th></tr></thead>
+              <tbody id="owRows"></tbody></table></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -163,10 +292,12 @@ const MAP_BASE = 'https://www.opendota.com/assets/images/dota2/map/';
 const MAPS = [['7.40','detailed_740'],['7.38','detailed_738'],['7.33','detailed_733'],
   ['7.32','detailed_732'],['7.23','detailed_723'],['7.20','detailed_720'],['7.07','detailed_707'],
   ['7.00','detailed_700'],['6.86','detailed_686'],['6.82','detailed_682']];
+const SLIM_VERSION = 1;
 
 const $ = id => document.getElementById(id);
 let heroes = null, patches = null, state = null;
 
+/* ---------- Helfer ---------- */
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -177,6 +308,12 @@ function fmt(t) {
   const s = Math.abs(Math.round(t));
   return (t < 0 ? '-' : '') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
+const pct = (a, b) => b ? Math.round(a / b * 100) + ' %' : '–';
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
 async function getJSON(url) {
   const r = await fetch(url);
   if (r.status === 404) throw new Error('Match nicht gefunden. Stimmt die ID, und ist das Match öffentlich?');
@@ -188,67 +325,141 @@ async function loadConstants() {
   if (!heroes) heroes = await getJSON(API + '/constants/heroes');
   if (!patches) patches = await getJSON(API + '/constants/patch').catch(() => []);
 }
-const hero = id => heroes[id] || { localized_name: 'Held ' + id, img: '', icon: '' };
-
-function setStatus(text, isError) {
-  $('status').textContent = text;
-  $('status').className = isError ? 'error small' : 'muted small';
+const hero = id => (heroes && heroes[id]) || { localized_name: 'Held ' + id, img: '', icon: '' };
+function heroCell(id, text) {
+  const td = el('td');
+  const h = hero(id);
+  if (h.icon) { const img = el('img'); img.src = CDN + h.icon; img.alt = ''; img.loading = 'lazy'; td.append(img); }
+  td.append(text || h.localized_name);
+  return td;
+}
+function mapFile(patchId) {
+  const p = patches && patches.find(x => x.id === patchId);
+  const v = p ? parseFloat(p.name) : 99;
+  const hit = MAPS.find(([name]) => v >= parseFloat(name));
+  return MAP_BASE + (hit ? hit[1] : 'detailed_pre682') + '.jpg';
+}
+function place(node, x, y) {
+  node.style.left = ((x - 64) / 127 * 100) + '%';
+  node.style.top = ((127 - (y - 64)) / 127 * 100) + '%';
+}
+function setStatus(id, text, isError) {
+  $(id).textContent = text;
+  $(id).className = 'status small ' + (isError ? 'error' : 'muted');
 }
 
-async function load(id) {
+/* ---------- Match-Daten: verkleinern und zwischenspeichern ---------- */
+function slim(m) {
+  const parsed = m.players.some(p => Array.isArray(p.obs_log));
+  const w = [];
+  for (const p of m.players) {
+    const r = p.player_slot < 128 ? 1 : 0;
+    for (const [ty, log, leftLog] of [['o', p.obs_log, p.obs_left_log], ['s', p.sen_log, p.sen_left_log]]) {
+      const left = {};
+      (leftLog || []).forEach(l => { left[l.ehandle] = l; });
+      (log || []).forEach(x => {
+        const l = left[x.ehandle];
+        w.push({ ty, t: x.time, x: x.x, y: x.y, r, h: p.hero_id,
+          e: l ? l.time : null, k: (l && l.attackername) || null });
+      });
+    }
+  }
+  w.sort((a, b) => a.t - b.t);
+  return {
+    v: SLIM_VERSION, id: m.match_id, start: m.start_time || 0, dur: m.duration || 0, patch: m.patch,
+    rw: !!m.radiant_win, rs: m.radiant_score, ds: m.dire_score,
+    rn: (m.radiant_team && m.radiant_team.name) || m.radiant_name || null,
+    dn: (m.dire_team && m.dire_team.name) || m.dire_name || null,
+    rt: m.radiant_team_id || null, dt: m.dire_team_id || null,
+    league: (m.league && m.league.name) || null, parsed,
+    pb: (m.picks_bans || []).map(p => ({ h: p.hero_id, t: p.team, p: p.is_pick ? 1 : 0, o: p.order }))
+      .sort((a, b) => a.o - b.o),
+    dtm: (m.draft_timings || []).map(t => ({ o: t.order, s: t.total_time_taken })),
+    pl: m.players.map(p => ({ r: p.player_slot < 128 ? 1 : 0, aid: p.account_id || null,
+      n: p.name || p.personaname || null, h: p.hero_id })),
+    w
+  };
+}
+const memCache = new Map();
+async function getMatch(id, force) {
+  id = String(id);
+  if (!force) {
+    if (memCache.has(id)) return memCache.get(id);
+    const c = store.get('drv.m.' + id);
+    if (c && c.v === SLIM_VERSION) { memCache.set(id, c); return c; }
+  }
+  const raw = await getJSON(API + '/matches/' + id);
+  if (!raw || !raw.players) throw new Error('Keine Daten für dieses Match.');
+  const s = slim(raw);
+  memCache.set(id, s);
+  // Nur ausgewertete Matches dauerhaft speichern, damit eine spätere Auswertung nachgeladen wird.
+  if (s.parsed) store.set('drv.m.' + id, s);
+  return s;
+}
+const teamName = (m, r) => (r ? m.rn : m.dn) || (r ? 'Radiant' : 'Dire');
+function sideLabel(m, r) {
+  const name = r ? m.rn : m.dn;
+  if (name) return name;
+  const names = m.pl.filter(p => p.r === (r ? 1 : 0) && p.n).slice(0, 3).map(p => p.n);
+  return names.length ? names.join(', ') : 'unbekannte Spieler';
+}
+
+/* ---------- Tabs ---------- */
+function showTab(name) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  $('tab-match').hidden = name !== 'match';
+  $('tab-opp').hidden = name !== 'opp';
+  store.set('drv.tab', name);
+  if (name === 'opp') openOpp();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+/* ===================== Einzelnes Match ===================== */
+async function load(id, force) {
   $('loadBtn').disabled = true;
-  setStatus('Lade Match ' + id + ' …');
+  setStatus('status', 'Lade Match ' + id + ' …');
   try {
     await loadConstants();
-    const m = await getJSON(API + '/matches/' + id);
-    if (!m || !m.players) throw new Error('Keine Daten für dieses Match.');
-    render(m);
+    const m = await getMatch(id, force);
+    $('result').hidden = false;
+    renderSummary(m); renderDraft(m); renderWards(m);
     history.replaceState(null, '', '?match=' + id);
-    setStatus('Match ' + id + ' geladen. Der Link in der Adresszeile lässt sich teilen.');
+    setStatus('status', 'Match ' + id + ' geladen. Der Link in der Adresszeile lässt sich teilen.');
   } catch (e) {
     $('result').hidden = true;
-    setStatus(e.message || String(e), true);
+    setStatus('status', e.message || String(e), true);
   } finally {
     $('loadBtn').disabled = false;
   }
 }
 
-function render(m) {
-  $('result').hidden = false;
-  renderSummary(m);
-  renderDraft(m);
-  renderWards(m);
-}
-
 function renderSummary(m) {
   const s = $('summary');
   s.replaceChildren();
-  const rad = (m.radiant_team && m.radiant_team.name) || m.radiant_name || 'Radiant';
-  const dire = (m.dire_team && m.dire_team.name) || m.dire_name || 'Dire';
+  const rad = teamName(m, 1), dire = teamName(m, 0);
   const score = el('span', 'score');
-  score.append(el('span', 'radiant', rad + ' ' + (m.radiant_score ?? '')), ' : ',
-               el('span', 'dire', (m.dire_score ?? '') + ' ' + dire));
+  score.append(el('span', 'radiant', rad + ' ' + (m.rs ?? '')), ' : ', el('span', 'dire', (m.ds ?? '') + ' ' + dire));
   s.append(score);
-  s.append(el('span', m.radiant_win ? 'radiant' : 'dire', 'Sieg: ' + (m.radiant_win ? rad : dire)));
-  s.append(el('span', 'muted', 'Dauer ' + fmt(m.duration || 0)));
-  if (m.start_time) s.append(el('span', 'muted', new Date(m.start_time * 1000).toLocaleString('de-DE',
+  s.append(el('span', m.rw ? 'radiant' : 'dire', 'Sieg: ' + (m.rw ? rad : dire)));
+  s.append(el('span', 'muted', 'Dauer ' + fmt(m.dur)));
+  if (m.start) s.append(el('span', 'muted', new Date(m.start * 1000).toLocaleString('de-DE',
     { dateStyle: 'medium', timeStyle: 'short' })));
-  if (m.league && m.league.name) s.append(el('span', 'muted', m.league.name));
+  if (m.league) s.append(el('span', 'muted', m.league));
 }
 
 function renderDraft(m) {
   const d = $('draft');
   d.replaceChildren();
-  const pb = (m.picks_bans || []).slice().sort((a, b) => a.order - b.order);
+  const pb = m.pb;
   if (!pb.length) {
     $('draftNote').textContent = 'Für dieses Match liefert OpenDota keine Pick- und Ban-Daten.';
     return;
   }
   const timings = {};
-  (m.draft_timings || []).forEach(t => { timings[t.order] = t; });
-  const hasTimes = Object.keys(timings).length > 0;
+  m.dtm.forEach(t => { timings[t.o] = t; });
+  const hasTimes = m.dtm.length > 0;
   // picks_bans zählt ab 0, draft_timings je nach Match ab 0 oder 1.
-  const timingBase = hasTimes ? Math.min(...Object.keys(timings).map(Number)) - pb[0].order : 0;
+  const timingBase = hasTimes ? Math.min(...m.dtm.map(t => t.o)) - pb[0].o : 0;
   $('draftNote').textContent = hasTimes
     ? 'Reihenfolge von links nach rechts. Unter jedem Helden steht die benötigte Bedenkzeit.'
     : 'Reihenfolge von links nach rechts. Uhrzeiten für die einzelnen Picks und Bans liefert OpenDota für dieses Match nicht, deshalb steht hier die Position im Draft.';
@@ -256,61 +467,34 @@ function renderDraft(m) {
   d.append(el('div', 'rowlabel muted small', 'Nr.'), el('div', 'rowlabel radiant', 'Radiant'),
            el('div', 'rowlabel dire', 'Dire'));
   pb.forEach((p, i) => {
-    const h = hero(p.hero_id);
-    const t = timings[p.order + timingBase];
+    const h = hero(p.h);
+    const t = timings[p.o + timingBase];
     d.append(el('div', 'num', '#' + (i + 1)));
-    const card = el('div', 'card ' + (p.is_pick ? 'pick ' : 'ban ') + (p.team === 0 ? 'radiant-b' : 'dire-b'));
-    card.title = h.localized_name + ' – ' + (p.is_pick ? 'Pick' : 'Ban') + ' #' + (i + 1);
+    const card = el('div', 'card ' + (p.p ? 'pick ' : 'ban ') + (p.t === 0 ? 'radiant-b' : 'dire-b'));
+    card.title = h.localized_name + ' – ' + (p.p ? 'Pick' : 'Ban') + ' #' + (i + 1);
     if (h.img) { const img = el('img'); img.src = CDN + h.img; img.alt = ''; img.loading = 'lazy'; card.append(img); }
     card.append(el('div', 'cap', h.localized_name));
-    let kind = p.is_pick ? 'Pick' : 'Ban';
-    if (t && t.total_time_taken != null) kind += ' · ' + t.total_time_taken + 's';
+    let kind = p.p ? 'Pick' : 'Ban';
+    if (t && t.s != null) kind += ' · ' + t.s + 's';
     card.append(el('div', 'kind', kind));
     const filled = el('div', 'slot'); filled.append(card);
     const empty = el('div', 'slot');
-    if (p.team === 0) d.append(filled, empty); else d.append(empty, filled);
+    if (p.t === 0) d.append(filled, empty); else d.append(empty, filled);
   });
 }
 
-function buildWards(m) {
-  const list = [];
-  for (const p of m.players) {
-    const radiant = p.player_slot < 128;
-    for (const [type, log, leftLog] of [['obs', p.obs_log, p.obs_left_log], ['sen', p.sen_log, p.sen_left_log]]) {
-      const left = {};
-      (leftLog || []).forEach(l => { left[l.ehandle] = l; });
-      (log || []).forEach(w => {
-        const l = left[w.ehandle];
-        list.push({ type, time: w.time, x: w.x, y: w.y, radiant, heroId: p.hero_id,
-          end: l ? l.time : null,
-          killer: l && l.attackername ? l.attackername : null });
-      });
-    }
-  }
-  return list.sort((a, b) => a.time - b.time);
-}
-
-function mapFile(m) {
-  const p = patches && patches.find(x => x.id === m.patch);
-  const v = p ? parseFloat(p.name) : 99;
-  const hit = MAPS.find(([name]) => v >= parseFloat(name));
-  return MAP_BASE + (hit ? hit[1] : 'detailed_pre682') + '.jpg';
-}
-
 function renderWards(m) {
-  const parsed = m.players.some(p => Array.isArray(p.obs_log));
-  $('wardsEmpty').hidden = parsed;
-  $('wardsBody').hidden = !parsed;
+  $('wardsEmpty').hidden = m.parsed;
+  $('wardsBody').hidden = !m.parsed;
   $('parseStatus').textContent = '';
   $('parseBtn').disabled = false;
-  state = { m, wards: parsed ? buildWards(m) : [], hl: null };
-  if (!parsed) return;
+  state = { m, wards: m.parsed ? m.w.map(w => ({ ...w })) : [], hl: null };
+  if (!m.parsed) return;
 
-  $('mapImg').src = mapFile(m);
+  $('mapImg').src = mapFile(m.patch);
   const t = $('time');
-  const first = state.wards.length ? state.wards[0].time : 0;
-  t.min = Math.min(-90, first);
-  t.max = m.duration || 3600;
+  t.min = Math.min(-90, state.wards.length ? state.wards[0].t : 0);
+  t.max = m.dur || 3600;
   t.value = 0;
 
   const map = $('map');
@@ -323,27 +507,20 @@ function renderWards(m) {
   };
 
   state.wards.forEach((w, i) => {
-    const pin = el('div', 'pin ' + w.type + (w.radiant ? ' radiant-b' : ' dire-b'));
-    pin.style.left = ((w.x - 64) / 127 * 100) + '%';
-    pin.style.top = ((127 - (w.y - 64)) / 127 * 100) + '%';
-    const h = hero(w.heroId);
-    const typeName = w.type === 'obs' ? 'Observer' : 'Sentry';
-    pin.title = fmt(w.time) + ' · ' + typeName + ' · ' + h.localized_name;
-    pin.append(el('span', null, fmt(w.time)));
+    const pin = el('div', 'pin ' + (w.ty === 'o' ? 'obs' : 'sen') + (w.r ? ' radiant-b' : ' dire-b'));
+    place(pin, w.x, w.y);
+    const typeName = w.ty === 'o' ? 'Observer' : 'Sentry';
+    pin.title = fmt(w.t) + ' · ' + typeName + ' · ' + hero(w.h).localized_name;
+    pin.append(el('span', null, fmt(w.t)));
     pin.addEventListener('click', () => select(i, false));
     map.append(pin);
     w.pin = pin;
 
-    const tr = el('tr');
-    tr.append(el('td', 't ' + (w.radiant ? 'radiant' : 'dire'), fmt(w.time)));
-    const td = el('td');
-    if (h.icon) { const img = el('img'); img.src = CDN + h.icon; img.alt = ''; img.loading = 'lazy'; td.append(img); }
-    td.append(h.localized_name);
-    tr.append(td, el('td', null, typeName));
-    const life = (w.end != null ? w.end : (m.duration || w.time)) - w.time;
-    tr.append(el('td', null, fmt(life)));
+    const tr = el('tr', 'click');
+    tr.append(el('td', 't ' + (w.r ? 'radiant' : 'dire'), fmt(w.t)), heroCell(w.h), el('td', null, typeName));
+    tr.append(el('td', null, fmt((w.e != null ? w.e : (m.dur || w.t)) - w.t)));
     let endText = 'bis Spielende';
-    if (w.end != null) endText = fmt(w.end) + (w.killer ? ' · zerstört von ' + killerName(w.killer) : ' · abgelaufen');
+    if (w.e != null) endText = fmt(w.e) + (w.k ? ' · zerstört von ' + killerName(w.k) : ' · abgelaufen');
     tr.append(el('td', 'muted', endText));
     tr.addEventListener('click', () => select(i, true));
     rows.append(tr);
@@ -355,23 +532,23 @@ function renderWards(m) {
 function select(i, jump) {
   state.hl = i;
   const w = state.wards[i];
-  if (jump && !$('showAll').checked) $('time').value = w.time;
+  if (jump && !$('showAll').checked) $('time').value = w.t;
   update();
   if (!jump) w.row.scrollIntoView({ block: 'nearest' });
 }
 
 function update() {
-  if (!state) return;
+  if (!state || !state.m.parsed) return;
   const t = Number($('time').value);
   const all = $('showAll').checked;
   $('time').disabled = all;
   $('timeLabel').textContent = all ? 'alle' : fmt(t);
-  const dur = state.m.duration || Infinity;
+  const dur = state.m.dur || Infinity;
   let shown = 0;
   state.wards.forEach((w, i) => {
-    const typeOk = w.type === 'obs' ? $('fObs').checked : $('fSen').checked;
-    const teamOk = w.radiant ? $('fRad').checked : $('fDire').checked;
-    const active = all || (w.time <= t && t < (w.end != null ? w.end : dur + 1));
+    const typeOk = w.ty === 'o' ? $('fObs').checked : $('fSen').checked;
+    const teamOk = w.r ? $('fRad').checked : $('fDire').checked;
+    const active = all || (w.t <= t && t < (w.e != null ? w.e : dur + 1));
     const vis = typeOk && teamOk && active;
     w.pin.hidden = !vis;
     w.pin.classList.toggle('hl', state.hl === i);
@@ -385,23 +562,25 @@ function update() {
     ? shown + ' Wards im ganzen Spiel. Zeile anklicken, um den Ward auf der Karte zu markieren.'
     : shown + ' Wards aktiv bei ' + fmt(t) + '. Zeile anklicken, um zu diesem Zeitpunkt zu springen.';
 }
-
 ['time', 'showAll', 'fObs', 'fSen', 'fRad', 'fDire'].forEach(id => $(id).addEventListener('input', update));
 
 $('form').addEventListener('submit', e => {
   e.preventDefault();
   const hit = $('matchInput').value.match(/\d{6,}/);
-  if (!hit) return setStatus('Bitte eine gültige Match-ID eingeben (nur Ziffern).', true);
+  if (!hit) return setStatus('status', 'Bitte eine gültige Match-ID eingeben (nur Ziffern).', true);
   $('matchInput').value = hit[0];
-  load(hit[0]);
+  load(hit[0], true);
 });
 
+async function requestParse(id) {
+  const r = await fetch(API + '/request/' + id, { method: 'POST' });
+  if (!r.ok) throw new Error('Fehler ' + r.status);
+}
 $('parseBtn').addEventListener('click', async () => {
   $('parseBtn').disabled = true;
   $('parseStatus').textContent = ' Anfrage läuft …';
   try {
-    const r = await fetch(API + '/request/' + state.m.match_id, { method: 'POST' });
-    if (!r.ok) throw new Error(r.status);
+    await requestParse(state.m.id);
     $('parseStatus').textContent = ' Angefordert. Das dauert meist ein paar Minuten, danach das Match neu laden.';
   } catch (e) {
     $('parseStatus').textContent = ' Anforderung fehlgeschlagen (' + e.message + ').';
@@ -409,8 +588,394 @@ $('parseBtn').addEventListener('click', async () => {
   }
 });
 
-const initial = new URLSearchParams(location.search).get('match');
-if (initial && /^\d{6,}$/.test(initial)) { $('matchInput').value = initial; load(initial); }
+/* ===================== Gegner ===================== */
+let opps = store.get('drv.opps') || [];
+let curId = store.get('drv.cur');
+let oppData = null;     // berechnete Statistik des aktuellen Gegners
+let oppLoadToken = 0;
+const saveOpps = () => { store.set('drv.opps', opps); store.set('drv.cur', curId); };
+const curOpp = () => opps.find(o => o.id === curId) || null;
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+function renderOppSelect() {
+  const s = $('oppSelect');
+  s.replaceChildren();
+  if (!opps.length) { const o = el('option', null, 'Noch kein Gegner angelegt'); o.value = ''; s.append(o); }
+  opps.forEach(o => {
+    const opt = el('option', null, o.name + ' (' + o.matches.length + ')');
+    opt.value = o.id; s.append(opt);
+  });
+  if (!curOpp() && opps.length) curId = opps[0].id;
+  s.value = curId || '';
+  const has = !!curOpp();
+  ['oppRename', 'oppShare', 'oppDelete'].forEach(id => { $(id).disabled = !has; });
+  $('oppBody').hidden = !has;
+}
+
+async function openOpp() {
+  renderOppSelect();
+  const o = curOpp();
+  if (!o) return;
+  const token = ++oppLoadToken;
+  try {
+    await loadConstants();
+  } catch (e) { return setStatus('oppAddStatus', e.message, true); }
+  // Matches laden, höchstens drei gleichzeitig.
+  const ids = o.matches.map(x => x.id);
+  const errors = {};
+  let done = 0, next = 0;
+  const worker = async () => {
+    while (next < ids.length) {
+      const id = ids[next++];
+      try { await getMatch(id); } catch (e) { errors[id] = e.message; }
+      done++;
+      if (token === oppLoadToken && ids.length) setStatus('oppAddStatus', 'Lade Matches … ' + done + ' von ' + ids.length);
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (token !== oppLoadToken) return;
+  const failed = Object.keys(errors).length;
+  setStatus('oppAddStatus', failed ? failed + ' Match(es) konnten nicht geladen werden: ' + Object.values(errors)[0] : '', !!failed);
+  computeOpp(errors);
+}
+
+/* Auf welcher Seite spielt der Gegner? Vergleich mit schon bekannten Spielern und Team-IDs. */
+function guessSide(o, m) {
+  const aids = new Set(), tids = new Set();
+  o.matches.forEach(x => {
+    const k = memCache.get(String(x.id));
+    if (!k) return;
+    k.pl.forEach(p => { if (p.aid && p.r === (x.side === 'r' ? 1 : 0)) aids.add(p.aid); });
+    const tid = x.side === 'r' ? k.rt : k.dt;
+    if (tid) tids.add(tid);
+  });
+  const score = r => m.pl.filter(p => p.r === r && p.aid && aids.has(p.aid)).length
+    + (tids.has(r ? m.rt : m.dt) ? 5 : 0)
+    + (((r ? m.rn : m.dn) || '').toLowerCase() === o.name.toLowerCase() ? 5 : 0);
+  const sr = score(1), sd = score(0);
+  if (sr === sd) return { side: 'r', sure: false };
+  return { side: sr > sd ? 'r' : 'd', sure: true };
+}
+
+function computeOpp(errors) {
+  const o = curOpp();
+  if (!o) return;
+  errors = errors || {};
+  const heroesPlayed = {}, banBy = {}, banVs = {}, players = {};
+  const wards = [];
+  let games = 0, wins = 0, anon = 0, latest = null;
+
+  o.matches.forEach(x => {
+    const m = memCache.get(String(x.id));
+    if (!m) return;
+    const r = x.side === 'r' ? 1 : 0;
+    const won = m.rw === !!r;
+    games++; if (won) wins++;
+    if (!latest || m.start > latest.start) latest = m;
+    m.pl.filter(p => p.r === r).forEach(p => {
+      const h = heroesPlayed[p.h] || (heroesPlayed[p.h] = { g: 0, w: 0, by: new Set() });
+      h.g++; if (won) h.w++;
+      if (p.n) h.by.add(p.n);
+      if (!p.aid) { anon++; return; }
+      const pl = players[p.aid] || (players[p.aid] = { name: p.n || ('Spieler ' + p.aid), g: 0, w: 0, last: 0, heroes: {} });
+      if (m.start >= pl.last && p.n) { pl.name = p.n; pl.last = m.start; }
+      pl.g++; if (won) pl.w++;
+      const ph = pl.heroes[p.h] || (pl.heroes[p.h] = { g: 0, w: 0 });
+      ph.g++; if (won) ph.w++;
+    });
+    m.pb.filter(p => !p.p).forEach(p => {
+      const mine = p.t === (r ? 0 : 1);
+      const t = mine ? banBy : banVs;
+      t[p.h] = (t[p.h] || 0) + 1;
+    });
+    m.w.filter(w => w.r === r).forEach(w => wards.push({ ...w, mid: m.id }));
+  });
+
+  oppData = { games, wins, wards, latest };
+  renderOppMatches(o, errors);
+
+  // Helden
+  const fill = (id, rows) => { $(id).replaceChildren(...rows); };
+  const emptyRow = (cols, text) => { const tr = el('tr'); const td = el('td', 'muted', text); td.colSpan = cols; tr.append(td); return tr; };
+  const hp = Object.entries(heroesPlayed).sort((a, b) => b[1].g - a[1].g || b[1].w - a[1].w);
+  fill('oppHeroRows', hp.length ? hp.map(([id, h]) => {
+    const tr = el('tr');
+    tr.append(heroCell(id), el('td', 'num', h.g), el('td', null, h.w), el('td', null, pct(h.w, h.g)),
+      el('td', 'muted wrap', [...h.by].join(', ')));
+    return tr;
+  }) : [emptyRow(5, 'Noch keine Matches.')]);
+  const banRows = t => {
+    const list = Object.entries(t).sort((a, b) => b[1] - a[1]);
+    return list.length ? list.map(([id, n]) => {
+      const tr = el('tr'); tr.append(heroCell(id), el('td', 'num', n + ' (' + pct(n, games) + ')')); return tr;
+    }) : [emptyRow(2, 'Keine Ban-Daten.')];
+  };
+  fill('oppBanByRows', banRows(banBy));
+  fill('oppBanVsRows', banRows(banVs));
+
+  // Spieler
+  const pls = Object.values(players).sort((a, b) => b.g - a.g);
+  fill('oppPlayerRows', pls.length ? pls.map(p => {
+    const tr = el('tr');
+    const td = el('td', 'wrap');
+    Object.entries(p.heroes).sort((a, b) => b[1].g - a[1].g).forEach(([id, h]) => {
+      const chip = el('span', 'chip');
+      const hh = hero(id);
+      if (hh.icon) { const img = el('img'); img.src = CDN + hh.icon; img.alt = ''; img.loading = 'lazy'; chip.append(img); }
+      chip.append(hh.localized_name + ' ' + h.g + ' · ' + h.w);
+      chip.title = hh.localized_name + ': ' + h.g + ' Spiele, ' + h.w + ' Siege';
+      td.append(chip);
+    });
+    tr.append(el('td', null, p.name), el('td', 'num', p.g), el('td', null, p.w + ' (' + pct(p.w, p.g) + ')'), td);
+    return tr;
+  }) : [emptyRow(4, 'Noch keine Spieler bekannt.')]);
+  $('oppPlayerNote').textContent = games
+    ? games + ' Matches, ' + wins + ' Siege (' + pct(wins, games) + ').' + (anon ? ' ' + anon + ' Einsätze von Spielern mit verborgenem Profil lassen sich keinem Spieler zuordnen.' : '')
+    : '';
+
+  $('oppMapImg').src = mapFile(latest ? latest.patch : null);
+  renderOppWards();
+}
+
+function renderOppMatches(o, errors) {
+  const rows = $('oppMatchRows');
+  rows.replaceChildren();
+  if (!o.matches.length) {
+    const tr = el('tr'); const td = el('td', 'muted', 'Noch keine Matches. Oben Match-IDs eintragen.'); td.colSpan = 6;
+    tr.append(td); rows.append(tr); return;
+  }
+  const sorted = o.matches.slice().sort((a, b) =>
+    ((memCache.get(String(b.id)) || {}).start || 0) - ((memCache.get(String(a.id)) || {}).start || 0));
+  sorted.forEach(x => {
+    const m = memCache.get(String(x.id));
+    const tr = el('tr');
+    const actions = el('td');
+    const rm = el('button', 'secondary mini', 'Entfernen');
+    rm.addEventListener('click', () => {
+      o.matches = o.matches.filter(y => y.id !== x.id); saveOpps(); renderOppSelect(); computeOpp();
+    });
+    if (!m) {
+      const td = el('td', 'muted', 'Match ' + x.id + ': ' + (errors[x.id] || 'nicht geladen')); td.colSpan = 5;
+      actions.append(rm); tr.append(td, actions); rows.append(tr); return;
+    }
+    tr.append(el('td', null, m.start ? new Date(m.start * 1000).toLocaleDateString('de-DE') : '–'));
+    const vs = el('td');
+    vs.append(el('span', 'radiant', sideLabel(m, 1)), ' vs ', el('span', 'dire', sideLabel(m, 0)));
+    tr.append(vs);
+
+    const sel = el('select', 'compact');
+    [['r', 'Radiant – ' + sideLabel(m, 1)], ['d', 'Dire – ' + sideLabel(m, 0)]].forEach(([v, text]) => {
+      const opt = el('option', null, text); opt.value = v; sel.append(opt);
+    });
+    sel.value = x.side;
+    sel.addEventListener('change', () => { x.side = sel.value; delete x.unsure; saveOpps(); computeOpp(); });
+    const sideTd = el('td'); sideTd.append(sel);
+    if (x.unsure) sideTd.append(el('span', 'warn small', ' bitte prüfen'));
+    tr.append(sideTd);
+
+    const won = m.rw === (x.side === 'r');
+    tr.append(el('td', won ? 'radiant' : 'dire', won ? 'Sieg' : 'Niederlage'));
+
+    const wtd = el('td');
+    if (m.parsed) wtd.textContent = m.w.filter(w => w.r === (x.side === 'r' ? 1 : 0)).length;
+    else {
+      wtd.append(el('span', 'warn', 'nicht ausgewertet '));
+      const b = el('button', 'secondary mini', 'Anfordern');
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { await requestParse(m.id); b.textContent = 'Angefordert'; }
+        catch (e) { b.textContent = 'Fehlgeschlagen'; b.disabled = false; }
+      });
+      const re = el('button', 'secondary mini', 'Neu laden');
+      re.style.marginLeft = '4px';
+      re.addEventListener('click', async () => {
+        re.disabled = true;
+        try { await getMatch(m.id, true); } catch (e) {}
+        computeOpp();
+      });
+      wtd.append(b, re);
+    }
+    tr.append(wtd);
+
+    const view = el('button', 'secondary mini', 'Ansehen');
+    view.style.marginRight = '4px';
+    view.addEventListener('click', () => { $('matchInput').value = m.id; showTab('match'); load(m.id); scrollTo(0, 0); });
+    actions.append(view, rm);
+    tr.append(actions);
+    rows.append(tr);
+  });
+}
+
+const WINDOWS = { all: [-1e9, 1e9], pre: [-1e9, 0], early: [0, 600], mid: [600, 1200], late: [1200, 2100], end: [2100, 1e9] };
+
+/* Nahe beieinander liegende Wards zu einer Stelle zusammenfassen (Radius in Karteneinheiten). */
+function cluster(ws, radius) {
+  const cs = [];
+  for (const w of ws) {
+    let best = null, bd = radius;
+    for (const c of cs) {
+      if (c.ty !== w.ty) continue;
+      const d = Math.hypot(c.x - w.x, c.y - w.y);
+      if (d <= bd) { bd = d; best = c; }
+    }
+    if (best) {
+      best.items.push(w);
+      const n = best.items.length;
+      best.x += (w.x - best.x) / n; best.y += (w.y - best.y) / n;
+    } else cs.push({ ty: w.ty, x: w.x, y: w.y, items: [w] });
+  }
+  return cs.sort((a, b) => b.items.length - a.items.length);
+}
+
+function renderOppWards() {
+  if (!oppData) return;
+  const map = $('oppMap');
+  map.querySelectorAll('.pin, .spot').forEach(n => n.remove());
+  const side = $('owSide').value, mode = $('owMode').value;
+  const [t0, t1] = WINDOWS[$('owTime').value];
+  const ws = oppData.wards.filter(w =>
+    (side === 'a' || (side === 'r') === !!w.r) &&
+    (w.ty === 'o' ? $('owObs').checked : $('owSen').checked) && w.t >= t0 && w.t < t1);
+  const cs = cluster(ws, 3);
+  const rows = $('owRows');
+  rows.replaceChildren();
+  const marks = [];
+  const highlight = i => {
+    marks.forEach((list, j) => list.forEach(n => n.classList.toggle('hl', i === j)));
+    [...rows.children].forEach((tr, j) => tr.classList.toggle('hl', i === j));
+  };
+
+  cs.forEach((c, i) => {
+    const cls = c.ty === 'o' ? 'obs' : 'sen';
+    const n = c.items.length;
+    const list = [];
+    if (mode === 'spots') {
+      const spot = el('div', 'spot ' + cls, n > 1 ? n : '');
+      const size = Math.min(14 + (n - 1) * 5, 44);
+      spot.style.width = spot.style.height = size + 'px';
+      spot.style.zIndex = String(100 - Math.min(n, 99)); // kleine Kreise liegen über großen
+      place(spot, c.x, c.y);
+      list.push(spot);
+    } else {
+      c.items.forEach(w => {
+        const pin = el('div', 'pin ' + cls + (w.r ? ' radiant-b' : ' dire-b'));
+        place(pin, w.x, w.y);
+        pin.title = fmt(w.t) + ' · ' + hero(w.h).localized_name + ' · Match ' + w.mid;
+        pin.append(el('span', null, fmt(w.t)));
+        list.push(pin);
+      });
+    }
+    const times = c.items.map(w => w.t).sort((a, b) => a - b);
+    const median = times[Math.floor(times.length / 2)];
+    const inMatches = new Set(c.items.map(w => w.mid)).size;
+    list.forEach(node => {
+      if (mode === 'spots') node.title = n + ' Wards in ' + inMatches + ' Matches · typisch bei ' + fmt(median);
+      node.addEventListener('click', () => { highlight(i); rows.children[i] && rows.children[i].scrollIntoView({ block: 'nearest' }); });
+      map.append(node);
+    });
+    marks.push(list);
+
+    const tr = el('tr', 'click');
+    tr.append(el('td', 'muted', i + 1), el('td', null, c.ty === 'o' ? 'Observer' : 'Sentry'),
+      el('td', 'num', n), el('td', null, inMatches + ' von ' + oppData.games), el('td', 't', fmt(median)),
+      el('td', 'muted', fmt(times[0]) + ' – ' + fmt(times[times.length - 1])));
+    tr.addEventListener('click', () => highlight(i));
+    rows.append(tr);
+  });
+  map.classList.toggle('nolabels', mode === 'pins' && ws.length > 40);
+  const unparsed = curOpp().matches.filter(x => { const m = memCache.get(String(x.id)); return m && !m.parsed; }).length;
+  $('owCount').textContent = ws.length + ' Wards an ' + cs.length + ' Stellen, häufigste zuerst. Zeile anklicken, um die Stelle zu markieren.'
+    + (unparsed ? ' ' + unparsed + ' Match(es) ohne Ward-Daten.' : '');
+}
+['owMode', 'owSide', 'owTime', 'owObs', 'owSen'].forEach(id => $(id).addEventListener('input', renderOppWards));
+
+/* ---------- Gegner verwalten ---------- */
+$('oppSelect').addEventListener('change', () => { curId = $('oppSelect').value || null; saveOpps(); openOpp(); });
+$('oppNew').addEventListener('click', () => {
+  const name = (prompt('Name des Gegners (Team oder Spielergruppe):') || '').trim();
+  if (!name) return;
+  const o = { id: newId(), name, matches: [] };
+  opps.push(o); curId = o.id; saveOpps(); openOpp();
+});
+$('oppRename').addEventListener('click', () => {
+  const o = curOpp(); if (!o) return;
+  const name = (prompt('Neuer Name:', o.name) || '').trim();
+  if (!name) return;
+  o.name = name; saveOpps(); renderOppSelect();
+});
+$('oppDelete').addEventListener('click', () => {
+  const o = curOpp(); if (!o) return;
+  if (!confirm('Gegner „' + o.name + '“ mit ' + o.matches.length + ' Matches löschen?')) return;
+  opps = opps.filter(x => x.id !== o.id); curId = opps.length ? opps[0].id : null; saveOpps(); openOpp();
+});
+
+const b64enc = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64dec = s => decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))));
+$('oppShare').addEventListener('click', async () => {
+  const o = curOpp(); if (!o) return;
+  const link = location.origin + location.pathname + '?import=' +
+    b64enc(JSON.stringify({ n: o.name, m: o.matches.map(x => [x.id, x.side]) }));
+  try {
+    await navigator.clipboard.writeText(link);
+    setStatus('oppStatus', 'Link in die Zwischenablage kopiert. Wer ihn öffnet, bekommt „' + o.name + '“ mit allen ' + o.matches.length + ' Matches.');
+  } catch (e) { prompt('Link zum Kopieren:', link); }
+});
+
+$('oppAddForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const o = curOpp(); if (!o) return;
+  const ids = [...new Set($('oppAddInput').value.match(/\d{6,}/g) || [])];
+  if (!ids.length) return setStatus('oppAddStatus', 'Bitte mindestens eine gültige Match-ID eingeben.', true);
+  $('oppAddBtn').disabled = true;
+  let added = 0, skipped = 0, unsure = 0; const failed = [];
+  try {
+    await loadConstants();
+    for (const id of ids) {
+      if (o.matches.some(x => String(x.id) === id)) { skipped++; continue; }
+      setStatus('oppAddStatus', 'Lade Match ' + id + ' …');
+      try {
+        const m = await getMatch(id);
+        const g = guessSide(o, m);
+        const entry = { id: m.id, side: g.side };
+        if (!g.sure) { entry.unsure = true; unsure++; }
+        o.matches.push(entry); added++;
+        saveOpps();
+      } catch (err) { failed.push(id + ' (' + err.message + ')'); }
+    }
+  } finally { $('oppAddBtn').disabled = false; }
+  $('oppAddInput').value = '';
+  renderOppSelect(); computeOpp();
+  let msg = added + ' Match(es) hinzugefügt.';
+  if (skipped) msg += ' ' + skipped + ' waren schon vorhanden.';
+  if (unsure) msg += ' Bei ' + unsure + ' konnte die Seite des Gegners nicht erkannt werden: bitte in der Tabelle prüfen.';
+  if (failed.length) msg += ' Nicht geladen: ' + failed.join(', ');
+  setStatus('oppAddStatus', msg, failed.length > 0);
+});
+
+/* ---------- Start ---------- */
+(function init() {
+  const q = new URLSearchParams(location.search);
+  const imp = q.get('import');
+  if (imp) {
+    try {
+      const d = JSON.parse(b64dec(imp));
+      const list = (d.m || []).filter(x => /^\d{6,}$/.test(String(x[0])))
+        .map(x => ({ id: Number(x[0]), side: x[1] === 'd' ? 'd' : 'r' }));
+      const name = String(d.n || 'Gegner').slice(0, 80);
+      if (confirm('Gegner „' + name + '“ mit ' + list.length + ' Matches übernehmen?')) {
+        let o = opps.find(x => x.name === name);
+        if (!o) { o = { id: newId(), name, matches: [] }; opps.push(o); }
+        list.forEach(x => { if (!o.matches.some(y => y.id === x.id)) o.matches.push(x); });
+        curId = o.id; saveOpps();
+      }
+    } catch (e) { alert('Der Link ist beschädigt und konnte nicht gelesen werden.'); }
+    history.replaceState(null, '', location.pathname);
+    return showTab('opp');
+  }
+  const initial = q.get('match');
+  if (initial && /^\d{6,}$/.test(initial)) { $('matchInput').value = initial; showTab('match'); return load(initial); }
+  showTab(store.get('drv.tab') === 'opp' ? 'opp' : 'match');
+})();
 </script>
 </body>
 </html>
