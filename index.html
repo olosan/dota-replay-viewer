@@ -105,9 +105,9 @@
   .chip { display: inline-block; background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
     padding: 1px 8px 1px 4px; margin: 2px 4px 2px 0; font-size: 12px; white-space: nowrap; }
   .chip img { margin-right: 4px; }
-  .cols3 { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 16px; }
-  @media (max-width: 860px) { .cols3 { grid-template-columns: 1fr; } }
-  .cols3 > div, .wards > div { min-width: 0; }
+  .cols2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 860px) { .cols2 { grid-template-columns: minmax(0, 1fr); } }
+  .cols2 > div, .wards > div { min-width: 0; }
   .warn { color: var(--obs); }
 </style>
 </head>
@@ -218,15 +218,29 @@
 
       <div class="panel">
         <h2>Helden</h2>
-        <div class="cols3">
-          <div><h3>Gespielt</h3><div class="list short"><table>
-            <thead><tr><th>Held</th><th>Spiele</th><th>Siege</th><th>Quote</th><th>Gespielt von</th></tr></thead>
-            <tbody id="oppHeroRows"></tbody></table></div></div>
+        <h3>Gespielt</h3>
+        <div class="list short"><table>
+          <thead><tr><th>Held</th><th>Spiele</th><th>Siege</th><th>Quote</th><th>Gespielt von</th></tr></thead>
+          <tbody id="oppHeroRows"></tbody></table></div>
+      </div>
+
+      <div class="panel">
+        <h2>Bans</h2>
+        <div class="controls" style="margin-top:0">
+          <select id="banPhase" class="compact" aria-label="Ban-Phase">
+            <option value="all">Alle Phasen</option>
+            <option value="1">Nur Phase 1</option>
+            <option value="2">Nur Phase 2</option>
+            <option value="3">Nur Phase 3</option>
+          </select>
+          <span class="muted small">Position = Stelle im Draft, an der der Held gebannt wurde (wie im Reiter „Einzelnes Match“).</span>
+        </div>
+        <div class="cols2">
           <div><h3>Bannt der Gegner</h3><div class="list short"><table>
-            <thead><tr><th>Held</th><th>Bans</th></tr></thead>
+            <thead><tr><th>Held</th><th>Bans</th><th>Ph. 1</th><th>Ph. 2</th><th>Ph. 3</th><th>Position</th></tr></thead>
             <tbody id="oppBanByRows"></tbody></table></div></div>
           <div><h3>Wird gegen ihn gebannt</h3><div class="list short"><table>
-            <thead><tr><th>Held</th><th>Bans</th></tr></thead>
+            <thead><tr><th>Held</th><th>Bans</th><th>Ph. 1</th><th>Ph. 2</th><th>Ph. 3</th><th>Position</th></tr></thead>
             <tbody id="oppBanVsRows"></tbody></table></div></div>
         </div>
       </div>
@@ -731,6 +745,31 @@ function guessSide(o, m) {
   return { side: sr > sd ? 'r' : 'd', sure: true };
 }
 
+const fill = (id, rows) => { $(id).replaceChildren(...rows); };
+const emptyRow = (cols, text) => { const tr = el('tr'); const td = el('td', 'muted', text); td.colSpan = cols; tr.append(td); return tr; };
+
+function renderBans() {
+  if (!oppData) return;
+  const ph = $('banPhase').value;
+  const rows = t => {
+    const list = Object.entries(t)
+      .map(([id, all]) => ({ id, all, sel: ph === 'all' ? all : all.filter(b => b.ph === Number(ph)) }))
+      .filter(x => x.sel.length)
+      .sort((a, b) => b.sel.length - a.sel.length || hero(a.id).localized_name.localeCompare(hero(b.id).localized_name));
+    if (!list.length) return [emptyRow(6, 'Keine Bans in dieser Auswahl.')];
+    return list.map(x => {
+      const tr = el('tr');
+      const count = n => x.all.filter(b => b.ph === n).length || '';
+      tr.append(heroCell(x.id), el('td', 'num', x.sel.length + ' (' + pct(x.sel.length, oppData.games) + ')'),
+        el('td', null, count(1)), el('td', null, count(2)), el('td', null, count(3)),
+        el('td', 'muted', x.sel.map(b => b.pos).sort((a, b) => a - b).map(n => '#' + n).join(' ')));
+      return tr;
+    });
+  };
+  fill('oppBanByRows', rows(oppData.banBy));
+  fill('oppBanVsRows', rows(oppData.banVs));
+}
+
 function computeOpp(errors) {
   const o = curOpp();
   if (!o) return;
@@ -757,20 +796,22 @@ function computeOpp(errors) {
       const ph = pl.heroes[p.h] || (pl.heroes[p.h] = { g: 0, w: 0 });
       ph.g++; if (won) ph.w++;
     });
-    m.pb.filter(p => !p.p).forEach(p => {
-      const mine = p.t === (r ? 0 : 1);
-      const t = mine ? banBy : banVs;
-      t[p.h] = (t[p.h] || 0) + 1;
+    // Ban-Phase: Bans, die durch Picks getrennt sind, gehören zu verschiedenen Phasen.
+    let phase = 1, seenBan = false, pickSince = false;
+    m.pb.forEach((p, i) => {
+      if (p.p) { pickSince = true; return; }
+      if (seenBan && pickSince) phase++;
+      seenBan = true; pickSince = false;
+      const t = p.t === (r ? 0 : 1) ? banBy : banVs;
+      (t[p.h] || (t[p.h] = [])).push({ ph: Math.min(phase, 3), pos: i + 1 });
     });
     m.w.filter(w => w.r === r).forEach(w => wards.push({ ...w, mid: m.id }));
   });
 
-  oppData = { games, wins, wards, latest };
+  oppData = { games, wins, wards, latest, banBy, banVs };
   renderOppMatches(o, errors);
 
   // Helden
-  const fill = (id, rows) => { $(id).replaceChildren(...rows); };
-  const emptyRow = (cols, text) => { const tr = el('tr'); const td = el('td', 'muted', text); td.colSpan = cols; tr.append(td); return tr; };
   const hp = Object.entries(heroesPlayed).sort((a, b) => b[1].g - a[1].g || b[1].w - a[1].w);
   fill('oppHeroRows', hp.length ? hp.map(([id, h]) => {
     const tr = el('tr');
@@ -778,14 +819,7 @@ function computeOpp(errors) {
       el('td', 'muted wrap', [...h.by].join(', ')));
     return tr;
   }) : [emptyRow(5, 'Noch keine Matches.')]);
-  const banRows = t => {
-    const list = Object.entries(t).sort((a, b) => b[1] - a[1]);
-    return list.length ? list.map(([id, n]) => {
-      const tr = el('tr'); tr.append(heroCell(id), el('td', 'num', n + ' (' + pct(n, games) + ')')); return tr;
-    }) : [emptyRow(2, 'Keine Ban-Daten.')];
-  };
-  fill('oppBanByRows', banRows(banBy));
-  fill('oppBanVsRows', banRows(banVs));
+  renderBans();
 
   // Spieler
   const pls = Object.values(players).sort((a, b) => b.g - a.g);
@@ -963,6 +997,7 @@ function renderOppWards() {
     + (unparsed ? ' ' + unparsed + ' Match(es) ohne Ward-Daten.' : '');
 }
 ['owMode', 'owSide', 'owTime', 'owObs', 'owSen'].forEach(id => $(id).addEventListener('input', renderOppWards));
+$('banPhase').addEventListener('input', renderBans);
 
 /* ---------- Gegner verwalten ---------- */
 $('oppSelect').addEventListener('change', () => { curId = $('oppSelect').value || null; saveLocal(); openOpp(); });
