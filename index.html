@@ -109,6 +109,14 @@
   .chip { display: inline-block; background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
     padding: 1px 8px 1px 4px; margin: 2px 4px 2px 0; font-size: 12px; white-space: nowrap; }
   .chip img { margin-right: 4px; }
+  .map canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .hgrid { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+  .htile { position: relative; width: 64px; height: 36px; border-radius: 4px; overflow: hidden;
+    border: 2px solid transparent; background: #000; }
+  .htile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .htile.off img { filter: grayscale(1); opacity: .22; }
+  .htile b { position: absolute; right: 0; bottom: 0; font-size: 11px; line-height: 1.3; padding: 0 4px;
+    color: #111; border-radius: 4px 0 0 0; }
   .cols2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
   @media (max-width: 860px) { .cols2 { grid-template-columns: minmax(0, 1fr); } }
   .cols2 > div, .wards > div { min-width: 0; }
@@ -268,11 +276,46 @@
       </div>
 
       <div class="panel">
+        <h2>Helden-Übersicht</h2>
+        <div class="controls" style="margin-top:0">
+          <select id="hgMode" class="compact" aria-label="Was die Übersicht zeigt">
+            <option value="pick">Vom Gegner gespielt</option>
+            <option value="banBy">Vom Gegner gebannt</option>
+            <option value="banVs">Gegen ihn gebannt</option>
+          </select>
+          <span class="muted small" id="hgCount"></span>
+        </div>
+        <div id="heroGrid"></div>
+      </div>
+
+      <div class="panel">
         <h2>Spieler</h2>
         <div id="oppPlayerNote" class="muted small" style="margin-bottom:8px"></div>
         <div class="list"><table>
           <thead><tr><th>Spieler</th><th>Spiele</th><th>Siege</th><th>Helden (Spiele · Siege)</th></tr></thead>
           <tbody id="oppPlayerRows"></tbody></table></div>
+      </div>
+
+      <div class="panel">
+        <h2>Positionen in den ersten 10 Minuten</h2>
+        <div class="wards">
+          <div>
+            <div class="map"><img class="bg" id="posMapImg" alt="Dota 2 Karte">
+              <canvas id="posCanvas" width="508" height="508"></canvas></div>
+          </div>
+          <div>
+            <div class="controls" style="margin-top:0">
+              <select id="posPlayer" class="compact" aria-label="Spieler"></select>
+              <select id="posHero" class="compact" aria-label="Held"></select>
+              <select id="posSide" class="compact" aria-label="Seite">
+                <option value="a">Beide Seiten</option>
+                <option value="r">Nur als Radiant</option>
+                <option value="d">Nur als Dire</option>
+              </select>
+            </div>
+            <div class="muted small" id="posCount"></div>
+          </div>
+        </div>
       </div>
 
       <div class="panel">
@@ -350,7 +393,7 @@ const MAP_BASE = 'https://www.opendota.com/assets/images/dota2/map/';
 const MAPS = [['7.40','detailed_740'],['7.38','detailed_738'],['7.33','detailed_733'],
   ['7.32','detailed_732'],['7.23','detailed_723'],['7.20','detailed_720'],['7.07','detailed_707'],
   ['7.00','detailed_700'],['6.86','detailed_686'],['6.82','detailed_682']];
-const SLIM_VERSION = 1;
+const SLIM_VERSION = 2;
 // Gemeinsame Datenbank (Supabase). Leer = Gegner werden nur im Browser gespeichert.
 const CONFIG = { url: 'https://afenxcqapfjstguzgauu.supabase.co', key: 'sb_publishable_NfTnvDBPAI35yoFoUTx5lg_KhHRl672' };
 const SHARED = !!(CONFIG.url && CONFIG.key);
@@ -410,6 +453,18 @@ function setStatus(id, text, isError) {
 }
 
 /* ---------- Match-Daten: verkleinern und zwischenspeichern ---------- */
+/* Aufenthaltsorte der ersten 10 Minuten: auf ein 2er-Raster vergröbert, als flache Liste x, y, Anzahl. */
+function packPos(lp) {
+  if (!lp) return null;
+  const g = {};
+  for (const x in lp) for (const y in lp[x]) {
+    const k = (x >> 1) + ',' + (y >> 1);
+    g[k] = (g[k] || 0) + lp[x][y];
+  }
+  const out = [];
+  for (const k in g) { const [a, b] = k.split(','); out.push(+a, +b, g[k]); }
+  return out;
+}
 function slim(m) {
   const parsed = m.players.some(p => Array.isArray(p.obs_log));
   const w = [];
@@ -437,7 +492,7 @@ function slim(m) {
       .sort((a, b) => a.o - b.o),
     dtm: (m.draft_timings || []).map(t => ({ o: t.order, s: t.total_time_taken })),
     pl: m.players.map(p => ({ r: p.player_slot < 128 ? 1 : 0, aid: p.account_id || null,
-      n: p.name || p.personaname || null, h: p.hero_id })),
+      n: p.name || p.personaname || null, h: p.hero_id, lp: packPos(p.lane_pos) })),
     w
   };
 }
@@ -856,12 +911,110 @@ function renderBans() {
   fill('oppBanVsRows', rows(oppData.banVs));
 }
 
+/* Helden-Übersicht: alle Helden als Raster, eingefärbt nach Häufigkeit. */
+const ATTRS = [['str', 'Stärke'], ['agi', 'Agilität'], ['int', 'Intelligenz'], ['all', 'Universal']];
+function renderHeroGrid() {
+  if (!oppData || !heroes) return;
+  const mode = $('hgMode').value;
+  const count = id => mode === 'pick' ? ((oppData.heroesPlayed[id] || {}).g || 0)
+    : ((mode === 'banBy' ? oppData.banBy : oppData.banVs)[id] || []).length;
+  const all = Object.values(heroes);
+  const max = Math.max(1, ...all.map(h => count(h.id)));
+  const box = $('heroGrid');
+  box.replaceChildren();
+  let used = 0;
+  ATTRS.forEach(([attr, label]) => {
+    const list = all.filter(h => h.primary_attr === attr).sort((a, b) => a.localized_name.localeCompare(b.localized_name));
+    if (!list.length) return;
+    box.append(el('h3', null, label));
+    const grid = el('div', 'hgrid');
+    list.forEach(h => {
+      const n = count(h.id);
+      const tile = el('div', 'htile' + (n ? '' : ' off'));
+      const img = el('img'); img.src = CDN + h.img; img.alt = h.localized_name; img.loading = 'lazy';
+      tile.append(img);
+      let tip = h.localized_name + ': ' + n + (mode === 'pick' ? '× gespielt' : '× gebannt');
+      if (n) {
+        used++;
+        const color = 'hsl(' + Math.round(55 - 55 * (max > 1 ? (n - 1) / (max - 1) : 1)) + ', 95%, 55%)';
+        tile.style.borderColor = color;
+        const b = el('b', null, n); b.style.background = color; tile.append(b);
+        const hp = oppData.heroesPlayed[h.id];
+        if (mode === 'pick' && hp) tip += ', ' + hp.w + ' Siege' + (hp.by.size ? ' · ' + [...hp.by].join(', ') : '');
+      }
+      tile.title = tip;
+      grid.append(tile);
+    });
+    box.append(grid);
+  });
+  $('hgCount').textContent = used + ' verschiedene Helden in ' + oppData.games + ' Matches. Gelb = selten, Rot = am häufigsten (' + max + '×).';
+}
+
+/* Positions-Heatmap: wo sich die Helden in den ersten 10 Minuten aufhalten. */
+function fillPosFilters() {
+  const keep = (id, options) => {
+    const sel = $(id), old = sel.value;
+    sel.replaceChildren(...options.map(([v, text]) => { const o = el('option', null, text); o.value = v; return o; }));
+    sel.value = options.some(([v]) => v === old) ? old : 'all';
+  };
+  const withPos = new Set(oppData.pos.map(p => String(p.aid)));
+  keep('posPlayer', [['all', 'Alle Spieler']].concat(Object.entries(oppData.players)
+    .filter(([aid]) => withPos.has(aid)).sort((a, b) => b[1].g - a[1].g).map(([aid, p]) => [aid, p.name])));
+  keep('posHero', [['all', 'Alle Helden']].concat([...new Set(oppData.pos.map(p => String(p.h)))]
+    .map(id => [id, hero(id).localized_name]).sort((a, b) => a[1].localeCompare(b[1]))));
+}
+function heatColor(t) { // blau -> grün -> gelb -> rot
+  const seg = Math.min(2.999, t * 3), i = Math.floor(seg), f = seg - i;
+  const stops = [[40, 90, 255], [40, 220, 120], [255, 225, 40], [255, 50, 30]];
+  return stops[i].map((c, k) => Math.round(c + (stops[i + 1][k] - c) * f));
+}
+function renderPos() {
+  if (!oppData) return;
+  const pl = $('posPlayer').value, he = $('posHero').value, side = $('posSide').value;
+  const sel = oppData.pos.filter(p => (pl === 'all' || String(p.aid) === pl) && (he === 'all' || String(p.h) === he)
+    && (side === 'a' || (side === 'r') === !!p.r));
+  const acc = new Map();
+  sel.forEach(p => {
+    for (let i = 0; i < p.lp.length; i += 3) {
+      const k = p.lp[i] * 256 + p.lp[i + 1];
+      acc.set(k, (acc.get(k) || 0) + p.lp[i + 2]);
+    }
+  });
+  const cv = $('posCanvas'), ctx = cv.getContext('2d'), W = cv.width;
+  ctx.clearRect(0, 0, W, W);
+  $('posCount').textContent = sel.length
+    ? sel.length + ' Einsätze ausgewertet. Rot = dort hält sich der Gegner am längsten auf. Erfasst sind nur die ersten 10 Spielminuten.'
+    : 'Keine Positionsdaten für diese Auswahl. Sie gibt es nur für ausgewertete Matches.';
+  if (!acc.size) return;
+  // Sehr hohe Einzelwerte (z. B. Warten am Brunnen) kappen, damit der Rest sichtbar bleibt.
+  const vals = [...acc.values()].sort((a, b) => a - b);
+  const cap = vals[Math.floor(vals.length * 0.97)] || 1;
+  const rad = W / 127 * 4;
+  acc.forEach((v, k) => {
+    const px = (((k >> 8) * 2 + 1) - 64) / 127 * W, py = (127 - (((k & 255) * 2 + 1) - 64)) / 127 * W;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
+    g.addColorStop(0, 'rgba(0,0,0,' + (0.08 + 0.5 * Math.min(1, v / cap)) + ')');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(px - rad, py - rad, rad * 2, rad * 2);
+  });
+  // Die aufsummierte Deckkraft in eine Farbe übersetzen.
+  const img = ctx.getImageData(0, 0, W, W), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (a < 30) { d[i + 3] = 0; continue; } // selten betretene Flächen frei lassen, damit die Karte lesbar bleibt
+    const c = heatColor(a / 255);
+    d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = Math.min(225, 25 + a);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
 function computeOpp(errors) {
   const o = curOpp();
   if (!o) return;
   errors = errors || {};
   const heroesPlayed = {}, banBy = {}, banVs = {}, players = {};
-  const wards = [];
+  const wards = [], pos = [];
   let games = 0, wins = 0, anon = 0, latest = null;
 
   o.matches.forEach(x => {
@@ -875,6 +1028,7 @@ function computeOpp(errors) {
       const h = heroesPlayed[p.h] || (heroesPlayed[p.h] = { g: 0, w: 0, by: new Set() });
       h.g++; if (won) h.w++;
       if (p.n) h.by.add(p.n);
+      if (p.lp && p.lp.length) pos.push({ aid: p.aid, h: p.h, r, lp: p.lp });
       if (!p.aid) { anon++; return; }
       const pl = players[p.aid] || (players[p.aid] = { name: p.n || ('Spieler ' + p.aid), g: 0, w: 0, last: 0, heroes: {} });
       if (m.start >= pl.last && p.n) { pl.name = p.n; pl.last = m.start; }
@@ -894,7 +1048,7 @@ function computeOpp(errors) {
     m.w.filter(w => w.r === r).forEach(w => wards.push({ ...w, mid: m.id }));
   });
 
-  oppData = { games, wins, wards, latest, banBy, banVs };
+  oppData = { games, wins, wards, latest, banBy, banVs, heroesPlayed, players, pos };
   renderOppMatches(o, errors);
 
   // Helden
@@ -927,8 +1081,11 @@ function computeOpp(errors) {
     ? games + ' Matches, ' + wins + ' Siege (' + pct(wins, games) + ').' + (anon ? ' ' + anon + ' Einsätze von Spielern mit verborgenem Profil lassen sich keinem Spieler zuordnen.' : '')
     : '';
 
-  $('oppMapImg').src = mapFile(latest ? latest.patch : null);
+  $('oppMapImg').src = $('posMapImg').src = mapFile(latest ? latest.patch : null);
   renderOppWards();
+  renderHeroGrid();
+  fillPosFilters();
+  renderPos();
 }
 
 function renderOppMatches(o, errors) {
@@ -1084,6 +1241,8 @@ function renderOppWards() {
 }
 ['owMode', 'owSide', 'owTime', 'owObs', 'owSen'].forEach(id => $(id).addEventListener('input', renderOppWards));
 $('banPhase').addEventListener('input', renderBans);
+$('hgMode').addEventListener('input', renderHeroGrid);
+['posPlayer', 'posHero', 'posSide'].forEach(id => $(id).addEventListener('input', renderPos));
 
 /* ---------- Gegner verwalten ---------- */
 $('oppSelect').addEventListener('change', () => { curId = $('oppSelect').value || null; saveLocal(); openOpp(); });
