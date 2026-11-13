@@ -249,8 +249,9 @@
       <div class="panel">
         <h2>Helden</h2>
         <h3>Gespielt</h3>
+        <p class="muted small" style="margin:0 0 8px">„Gepickt als“ = der wievielte Pick des Gegners der Held war (1. bis 5.), mit Anzahl, wenn es mehrfach vorkam.</p>
         <div class="list short"><table>
-          <thead><tr><th>Held</th><th>Spiele</th><th>Siege</th><th>Quote</th><th>Gespielt von</th></tr></thead>
+          <thead><tr><th>Held</th><th>Spiele</th><th>Siege</th><th>Quote</th><th>Gepickt als</th><th>Gespielt von</th></tr></thead>
           <tbody id="oppHeroRows"></tbody></table></div>
       </div>
 
@@ -1009,6 +1010,13 @@ function renderPos() {
   ctx.putImageData(img, 0, 0);
 }
 
+/* „1. (2×), 4.“: an welcher Stelle der eigenen Picks ein Held genommen wurde. */
+function pickText(pk) {
+  const c = {};
+  pk.forEach(n => { c[n] = (c[n] || 0) + 1; });
+  return Object.keys(c).sort((a, b) => a - b).map(n => n + '.' + (c[n] > 1 ? ' (' + c[n] + '×)' : '')).join(', ') || '–';
+}
+
 function computeOpp(errors) {
   const o = curOpp();
   if (!o) return;
@@ -1025,7 +1033,7 @@ function computeOpp(errors) {
     games++; if (won) wins++;
     if (!latest || m.start > latest.start) latest = m;
     m.pl.filter(p => p.r === r).forEach(p => {
-      const h = heroesPlayed[p.h] || (heroesPlayed[p.h] = { g: 0, w: 0, by: new Set() });
+      const h = heroesPlayed[p.h] || (heroesPlayed[p.h] = { g: 0, w: 0, by: new Set(), pk: [] });
       h.g++; if (won) h.w++;
       if (p.n) h.by.add(p.n);
       if (p.lp && p.lp.length) pos.push({ aid: p.aid, h: p.h, r, lp: p.lp });
@@ -1037,9 +1045,13 @@ function computeOpp(errors) {
       ph.g++; if (won) ph.w++;
     });
     // Ban-Phase: Bans, die durch Picks getrennt sind, gehören zu verschiedenen Phasen.
-    let phase = 1, seenBan = false, pickSince = false;
+    let phase = 1, seenBan = false, pickSince = false, ownPick = 0;
     m.pb.forEach((p, i) => {
-      if (p.p) { pickSince = true; return; }
+      if (p.p) {
+        pickSince = true;
+        if (p.t === (r ? 0 : 1)) { ownPick++; if (heroesPlayed[p.h]) heroesPlayed[p.h].pk.push(ownPick); }
+        return;
+      }
       if (seenBan && pickSince) phase++;
       seenBan = true; pickSince = false;
       const t = p.t === (r ? 0 : 1) ? banBy : banVs;
@@ -1056,9 +1068,9 @@ function computeOpp(errors) {
   fill('oppHeroRows', hp.length ? hp.map(([id, h]) => {
     const tr = el('tr');
     tr.append(heroCell(id), el('td', 'num', h.g), el('td', null, h.w), el('td', null, pct(h.w, h.g)),
-      el('td', 'muted wrap', [...h.by].join(', ')));
+      el('td', null, pickText(h.pk)), el('td', 'muted wrap', [...h.by].join(', ')));
     return tr;
-  }) : [emptyRow(5, 'Noch keine Matches.')]);
+  }) : [emptyRow(6, 'Noch keine Matches.')]);
   renderBans();
 
   // Spieler
