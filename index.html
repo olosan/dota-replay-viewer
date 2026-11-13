@@ -651,9 +651,10 @@ async function change(o, fn) {
     return false;
   } finally {
     // Sind durch andere neue Matches dazugekommen, müssen sie erst geladen werden.
+    renderOppSelect(); // legt auch fest, welcher Gegner gerade ausgewählt ist
     const c = curOpp();
     if (c && c.matches.some(x => !memCache.has(String(x.id)))) openOpp();
-    else { renderOppSelect(); computeOpp(); }
+    else computeOpp();
   }
 }
 const OPP_HINT = SHARED
@@ -996,7 +997,7 @@ $('oppUpload').addEventListener('click', async () => {
   }
   store.del('drv.opps');
   setStatus('oppStatus', 'Hochgeladen. ' + OPP_HINT);
-  renderOppSelect();
+  openOpp();
 });
 
 const b64enc = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
