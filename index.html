@@ -193,9 +193,9 @@
         <button id="oppRename" class="secondary">Umbenennen</button>
         <button id="oppShare" class="secondary">Link teilen</button>
         <button id="oppDelete" class="secondary">Löschen</button>
+        <button id="oppUpload" class="secondary" hidden></button>
       </div>
-      <div id="oppStatus" class="status muted small">Gegner werden nur in diesem Browser gespeichert.
-        Mit „Link teilen“ bekommen Freunde denselben Gegner mit allen Matches.</div>
+      <div id="oppStatus" class="status muted small"></div>
     </div>
 
     <div id="oppBody" hidden>
@@ -293,6 +293,9 @@ const MAPS = [['7.40','detailed_740'],['7.38','detailed_738'],['7.33','detailed_
   ['7.32','detailed_732'],['7.23','detailed_723'],['7.20','detailed_720'],['7.07','detailed_707'],
   ['7.00','detailed_700'],['6.86','detailed_686'],['6.82','detailed_682']];
 const SLIM_VERSION = 1;
+// Gemeinsame Datenbank (Supabase). Leer = Gegner werden nur im Browser gespeichert.
+const CONFIG = { url: 'https://afenxcqapfjstguzgauu.supabase.co', key: 'sb_publishable_NfTnvDBPAI35yoFoUTx5lg_KhHRl672' };
+const SHARED = !!(CONFIG.url && CONFIG.key);
 
 const $ = id => document.getElementById(id);
 let heroes = null, patches = null, state = null;
@@ -379,6 +382,36 @@ function slim(m) {
       n: p.name || p.personaname || null, h: p.hero_id })),
     w
   };
+}
+async function remote(path, opts) {
+  const headers = { apikey: CONFIG.key, 'Content-Type': 'application/json' };
+  if (CONFIG.key.startsWith('eyJ')) headers.Authorization = 'Bearer ' + CONFIG.key;
+  const r = await fetch(CONFIG.url + '/rest/v1/' + path, Object.assign({}, opts, { headers }));
+  if (!r.ok) {
+    let msg = 'Datenbank antwortet mit Fehler ' + r.status;
+    try { msg = (await r.json()).message || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  const text = await r.text();
+  return text ? JSON.parse(text) : null;
+}
+function getPass() {
+  let p = store.get('drv.pass');
+  if (!p) {
+    p = (prompt('Passwort zum Bearbeiten der gemeinsamen Gegner:') || '').trim();
+    if (!p) throw new Error('Ohne Passwort kann nichts geändert werden.');
+    store.set('drv.pass', p);
+  }
+  return p;
+}
+async function rpc(name, body) {
+  const pass = getPass();
+  try {
+    return await remote('rpc/' + name, { method: 'POST', body: JSON.stringify(Object.assign({ p_pass: pass }, body)) });
+  } catch (e) {
+    if (/passwort/i.test(e.message)) store.del('drv.pass');
+    throw e;
+  }
 }
 const memCache = new Map();
 async function getMatch(id, force) {
@@ -589,11 +622,43 @@ $('parseBtn').addEventListener('click', async () => {
 });
 
 /* ===================== Gegner ===================== */
-let opps = store.get('drv.opps') || [];
+let opps = SHARED ? [] : (store.get('drv.opps') || []);
 let curId = store.get('drv.cur');
 let oppData = null;     // berechnete Statistik des aktuellen Gegners
 let oppLoadToken = 0;
-const saveOpps = () => { store.set('drv.opps', opps); store.set('drv.cur', curId); };
+const saveLocal = () => { if (!SHARED) store.set('drv.opps', opps); store.set('drv.cur', curId); };
+const cleanRow = r => ({ id: r.id, name: r.name, matches: Array.isArray(r.matches) ? r.matches : [] });
+async function syncOpps() {
+  if (!SHARED) return;
+  opps = (await remote('drv_opponents?select=id,name,matches&order=name')).map(cleanRow);
+}
+/* Eine Änderung an einem Gegner speichern. In der gemeinsamen Datenbank wird vorher der aktuelle
+   Stand geholt, damit gleichzeitige Änderungen von anderen nicht überschrieben werden. */
+async function mutate(o, fn) {
+  if (SHARED) {
+    const rows = await remote('drv_opponents?select=id,name,matches&id=eq.' + encodeURIComponent(o.id));
+    if (rows && rows[0]) Object.assign(o, cleanRow(rows[0]));
+    fn(o);
+    await rpc('drv_save', { p_id: o.id, p_name: o.name, p_matches: o.matches });
+  } else fn(o);
+  saveLocal();
+}
+async function change(o, fn) {
+  try { await mutate(o, fn); return true; }
+  catch (e) {
+    setStatus('oppStatus', 'Nicht gespeichert: ' + e.message, true);
+    if (SHARED) await syncOpps().catch(() => {});
+    return false;
+  } finally {
+    // Sind durch andere neue Matches dazugekommen, müssen sie erst geladen werden.
+    const c = curOpp();
+    if (c && c.matches.some(x => !memCache.has(String(x.id)))) openOpp();
+    else { renderOppSelect(); computeOpp(); }
+  }
+}
+const OPP_HINT = SHARED
+  ? 'Die Gegner sind für alle Besucher gleich. Zum Ändern braucht man das gemeinsame Passwort.'
+  : 'Gegner werden nur in diesem Browser gespeichert. Mit „Link teilen“ bekommen Freunde denselben Gegner mit allen Matches.';
 const curOpp = () => opps.find(o => o.id === curId) || null;
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -609,10 +674,18 @@ function renderOppSelect() {
   s.value = curId || '';
   const has = !!curOpp();
   ['oppRename', 'oppShare', 'oppDelete'].forEach(id => { $(id).disabled = !has; });
+  $('oppShare').hidden = SHARED;
+  const local = SHARED ? (store.get('drv.opps') || []) : [];
+  $('oppUpload').hidden = !local.length;
+  $('oppUpload').textContent = 'Gegner aus diesem Browser hochladen (' + local.length + ')';
   $('oppBody').hidden = !has;
 }
 
 async function openOpp() {
+  if (SHARED) {
+    try { await syncOpps(); setStatus('oppStatus', OPP_HINT); }
+    catch (e) { setStatus('oppStatus', 'Gegner konnten nicht geladen werden: ' + e.message, true); }
+  }
   renderOppSelect();
   const o = curOpp();
   if (!o) return;
@@ -751,9 +824,7 @@ function renderOppMatches(o, errors) {
     const tr = el('tr');
     const actions = el('td');
     const rm = el('button', 'secondary mini', 'Entfernen');
-    rm.addEventListener('click', () => {
-      o.matches = o.matches.filter(y => y.id !== x.id); saveOpps(); renderOppSelect(); computeOpp();
-    });
+    rm.addEventListener('click', () => change(o, o => { o.matches = o.matches.filter(y => y.id !== x.id); }));
     if (!m) {
       const td = el('td', 'muted', 'Match ' + x.id + ': ' + (errors[x.id] || 'nicht geladen')); td.colSpan = 5;
       actions.append(rm); tr.append(td, actions); rows.append(tr); return;
@@ -768,7 +839,10 @@ function renderOppMatches(o, errors) {
       const opt = el('option', null, text); opt.value = v; sel.append(opt);
     });
     sel.value = x.side;
-    sel.addEventListener('change', () => { x.side = sel.value; delete x.unsure; saveOpps(); computeOpp(); });
+    sel.addEventListener('change', () => { const v = sel.value; change(o, o => {
+      const y = o.matches.find(y => y.id === x.id);
+      if (y) { y.side = v; delete y.unsure; }
+    }); });
     const sideTd = el('td'); sideTd.append(sel);
     if (x.unsure) sideTd.append(el('span', 'warn small', ' bitte prüfen'));
     tr.append(sideTd);
@@ -890,23 +964,39 @@ function renderOppWards() {
 ['owMode', 'owSide', 'owTime', 'owObs', 'owSen'].forEach(id => $(id).addEventListener('input', renderOppWards));
 
 /* ---------- Gegner verwalten ---------- */
-$('oppSelect').addEventListener('change', () => { curId = $('oppSelect').value || null; saveOpps(); openOpp(); });
+$('oppSelect').addEventListener('change', () => { curId = $('oppSelect').value || null; saveLocal(); openOpp(); });
 $('oppNew').addEventListener('click', () => {
   const name = (prompt('Name des Gegners (Team oder Spielergruppe):') || '').trim();
   if (!name) return;
   const o = { id: newId(), name, matches: [] };
-  opps.push(o); curId = o.id; saveOpps(); openOpp();
+  opps.push(o); curId = o.id;
+  change(o, () => {});
 });
 $('oppRename').addEventListener('click', () => {
   const o = curOpp(); if (!o) return;
   const name = (prompt('Neuer Name:', o.name) || '').trim();
   if (!name) return;
-  o.name = name; saveOpps(); renderOppSelect();
+  change(o, o => { o.name = name; });
 });
-$('oppDelete').addEventListener('click', () => {
+$('oppDelete').addEventListener('click', async () => {
   const o = curOpp(); if (!o) return;
   if (!confirm('Gegner „' + o.name + '“ mit ' + o.matches.length + ' Matches löschen?')) return;
-  opps = opps.filter(x => x.id !== o.id); curId = opps.length ? opps[0].id : null; saveOpps(); openOpp();
+  try { if (SHARED) await rpc('drv_delete', { p_id: o.id }); }
+  catch (e) { return setStatus('oppStatus', 'Nicht gelöscht: ' + e.message, true); }
+  opps = opps.filter(x => x.id !== o.id); curId = opps.length ? opps[0].id : null; saveLocal(); openOpp();
+});
+$('oppUpload').addEventListener('click', async () => {
+  const local = store.get('drv.opps') || [];
+  if (!confirm(local.length + ' Gegner aus diesem Browser in die gemeinsame Datenbank hochladen?')) return;
+  for (const l of local) {
+    let o = opps.find(x => x.name === l.name);
+    if (!o) { o = { id: newId(), name: l.name, matches: [] }; opps.push(o); }
+    const ok = await change(o, o => { (l.matches || []).forEach(x => { if (!o.matches.some(y => y.id === x.id)) o.matches.push(x); }); });
+    if (!ok) return;
+  }
+  store.del('drv.opps');
+  setStatus('oppStatus', 'Hochgeladen. ' + OPP_HINT);
+  renderOppSelect();
 });
 
 const b64enc = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -927,7 +1017,7 @@ $('oppAddForm').addEventListener('submit', async e => {
   const ids = [...new Set($('oppAddInput').value.match(/\d{6,}/g) || [])];
   if (!ids.length) return setStatus('oppAddStatus', 'Bitte mindestens eine gültige Match-ID eingeben.', true);
   $('oppAddBtn').disabled = true;
-  let added = 0, skipped = 0, unsure = 0; const failed = [];
+  let added = 0, skipped = 0, unsure = 0; const failed = [], entries = [];
   try {
     await loadConstants();
     for (const id of ids) {
@@ -938,13 +1028,14 @@ $('oppAddForm').addEventListener('submit', async e => {
         const g = guessSide(o, m);
         const entry = { id: m.id, side: g.side };
         if (!g.sure) { entry.unsure = true; unsure++; }
-        o.matches.push(entry); added++;
-        saveOpps();
+        entries.push(entry); added++;
       } catch (err) { failed.push(id + ' (' + err.message + ')'); }
     }
+    if (entries.length && !(await change(o, o => {
+      entries.forEach(x => { if (!o.matches.some(y => y.id === x.id)) o.matches.push(x); });
+    }))) return setStatus('oppAddStatus', 'Die Matches wurden nicht gespeichert.', true);
   } finally { $('oppAddBtn').disabled = false; }
   $('oppAddInput').value = '';
-  renderOppSelect(); computeOpp();
   let msg = added + ' Match(es) hinzugefügt.';
   if (skipped) msg += ' ' + skipped + ' waren schon vorhanden.';
   if (unsure) msg += ' Bei ' + unsure + ' konnte die Seite des Gegners nicht erkannt werden: bitte in der Tabelle prüfen.';
@@ -953,7 +1044,8 @@ $('oppAddForm').addEventListener('submit', async e => {
 });
 
 /* ---------- Start ---------- */
-(function init() {
+(async function init() {
+  setStatus('oppStatus', OPP_HINT);
   const q = new URLSearchParams(location.search);
   const imp = q.get('import');
   if (imp) {
@@ -963,10 +1055,11 @@ $('oppAddForm').addEventListener('submit', async e => {
         .map(x => ({ id: Number(x[0]), side: x[1] === 'd' ? 'd' : 'r' }));
       const name = String(d.n || 'Gegner').slice(0, 80);
       if (confirm('Gegner „' + name + '“ mit ' + list.length + ' Matches übernehmen?')) {
+        if (SHARED) await syncOpps().catch(() => {});
         let o = opps.find(x => x.name === name);
         if (!o) { o = { id: newId(), name, matches: [] }; opps.push(o); }
-        list.forEach(x => { if (!o.matches.some(y => y.id === x.id)) o.matches.push(x); });
-        curId = o.id; saveOpps();
+        curId = o.id;
+        await change(o, o => { list.forEach(x => { if (!o.matches.some(y => y.id === x.id)) o.matches.push(x); }); });
       }
     } catch (e) { alert('Der Link ist beschädigt und konnte nicht gelesen werden.'); }
     history.replaceState(null, '', location.pathname);
