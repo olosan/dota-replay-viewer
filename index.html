@@ -13,7 +13,11 @@
   body { margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
-  h1 { font-size: 22px; margin: 0 0 14px; }
+  h1 { font-size: 22px; margin: 0; }
+  .top { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between;
+    margin-bottom: 14px; }
+  .badge { background: var(--panel); border: 1px solid var(--accent); border-radius: 16px;
+    padding: 4px 12px; font-size: 14px; font-weight: 600; }
   h2 { font-size: 17px; margin: 0 0 12px; }
   h3 { font-size: 14px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -113,7 +117,10 @@
 </head>
 <body>
 <main>
-  <h1>Dota 2 Replay Viewer</h1>
+  <header class="top">
+    <h1>Dota 2 Replay Viewer</h1>
+    <span id="teamBadge" class="badge" hidden></span>
+  </header>
 
   <nav class="tabs">
     <button data-tab="match" class="on">Einzelnes Match</button>
@@ -649,10 +656,16 @@ let oppLoadToken = 0;
 const saveLocal = () => { if (!SHARED) store.set('drv.opps', opps); store.set('drv.cur', curId); };
 const cleanRow = r => ({ id: r.id, name: r.name, matches: Array.isArray(r.matches) ? r.matches : [] });
 let spaceName = '';
+function showTeam(name) {
+  spaceName = name || '';
+  if (spaceName) store.set('drv.space', spaceName); else store.del('drv.space');
+  $('teamBadge').textContent = 'Angemeldet: ' + spaceName;
+  $('teamBadge').hidden = !spaceName;
+}
 async function syncOpps() {
   if (!SHARED) return;
   const d = await rpc('drv_list', {});
-  spaceName = d.space || '';
+  showTeam(d.space);
   opps = (d.opponents || []).map(cleanRow);
 }
 /* Eine Änderung an einem Gegner speichern. In der gemeinsamen Datenbank wird vorher der aktuelle
@@ -688,6 +701,7 @@ const oppHint = () => SHARED
   : 'Gegner werden nur in diesem Browser gespeichert. Mit „Link teilen“ bekommen Freunde denselben Gegner mit allen Matches.';
 const LOGIN_HINT = 'Jedes Team hat ein eigenes Passwort und sieht damit nur seine eigenen Gegner.';
 function showLogin(message) {
+  showTeam('');
   $('oppLogin').hidden = false; $('oppMain').hidden = true; $('oppBody').hidden = true;
   setStatus('oppLoginStatus', message || LOGIN_HINT, !!message);
 }
@@ -1056,7 +1070,7 @@ $('oppLoginForm').addEventListener('submit', e => {
   openOpp();
 });
 $('oppLogout').addEventListener('click', () => {
-  store.del('drv.pass'); opps = []; oppData = null; spaceName = '';
+  store.del('drv.pass'); opps = []; oppData = null;
   openOpp();
 });
 $('oppUpload').addEventListener('click', async () => {
@@ -1119,6 +1133,8 @@ $('oppAddForm').addEventListener('submit', async e => {
 
 /* ---------- Start ---------- */
 (async function init() {
+  // Teamnamen sofort zeigen, auch wenn die Seite im Reiter „Einzelnes Match“ startet.
+  if (SHARED && store.get('drv.pass')) showTeam(store.get('drv.space'));
   setStatus('oppStatus', oppHint());
   const q = new URLSearchParams(location.search);
   const imp = q.get('import');
