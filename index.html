@@ -119,12 +119,16 @@
 <main>
   <header class="top">
     <h1>Dota 2 Replay Viewer</h1>
-    <span id="teamBadge" class="badge" hidden></span>
+    <span class="bar">
+      <span id="teamBadge" class="badge" hidden></span>
+      <button id="logoutBtn" class="secondary mini" hidden>Abmelden</button>
+    </span>
   </header>
 
   <nav class="tabs">
     <button data-tab="match" class="on">Einzelnes Match</button>
     <button data-tab="opp">Gegner</button>
+    <button data-tab="admin" id="adminTabBtn" hidden>Verwaltung</button>
   </nav>
 
   <!-- ===================== Einzelnes Match ===================== -->
@@ -194,23 +198,24 @@
   <!-- ===================== Gegner ===================== -->
   <section id="tab-opp" hidden>
     <div class="panel" id="oppLogin" hidden>
-      <h2>Team-Bereich öffnen</h2>
+      <h2>Anmelden</h2>
       <form id="oppLoginForm">
+        <input id="oppLoginInput" type="text" autocomplete="username" autocapitalize="none"
+               placeholder="Teamname" aria-label="Teamname">
         <input id="oppPassInput" type="password" autocomplete="current-password"
-               placeholder="Passwort des Team-Bereichs" aria-label="Passwort des Team-Bereichs">
-        <button type="submit">Öffnen</button>
+               placeholder="Passwort" aria-label="Passwort">
+        <button type="submit">Anmelden</button>
       </form>
       <div id="oppLoginStatus" class="status muted small"></div>
     </div>
     <div class="panel" id="oppMain">
-      <div class="bar">
+      <div class="bar" id="oppBar">
         <select id="oppSelect" aria-label="Gegner auswählen"></select>
         <button id="oppNew">Neuer Gegner</button>
         <button id="oppRename" class="secondary">Umbenennen</button>
         <button id="oppShare" class="secondary">Link teilen</button>
         <button id="oppDelete" class="secondary">Löschen</button>
         <button id="oppUpload" class="secondary" hidden></button>
-        <button id="oppLogout" class="secondary" hidden>Bereich wechseln</button>
       </div>
       <div id="oppStatus" class="status muted small"></div>
     </div>
@@ -311,6 +316,28 @@
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ===================== Verwaltung ===================== -->
+  <section id="tab-admin" hidden>
+    <div class="panel">
+      <h2>Neues Team anlegen</h2>
+      <form id="adminCreateForm">
+        <input id="adminNewName" type="text" maxlength="40" autocomplete="off"
+               placeholder="Teamname (ist zugleich der Anmeldename)" aria-label="Teamname">
+        <input id="adminNewPass" type="text" autocomplete="off"
+               placeholder="Passwort (mindestens 8 Zeichen)" aria-label="Passwort für das Team">
+        <button type="submit">Anlegen</button>
+      </form>
+      <div id="adminStatus" class="status muted small">Gib dem Team danach den Link zur Seite, seinen Teamnamen und das Passwort.</div>
+    </div>
+    <div class="panel">
+      <h2>Teams</h2>
+      <div class="list"><table>
+        <thead><tr><th>Team / Anmeldename</th><th>Gegner</th><th>Angelegt</th><th></th></tr></thead>
+        <tbody id="adminRows"></tbody></table></div>
+      <div class="controls"><button id="adminOwnPass" class="secondary">Eigenes Admin-Passwort ändern</button></div>
     </div>
   </section>
 </main>
@@ -426,20 +453,21 @@ async function remote(path, opts) {
   const text = await r.text();
   return text ? JSON.parse(text) : null;
 }
-function getPass() {
-  const p = store.get('drv.pass');
-  if (!p) throw new Error('Bitte zuerst das Passwort des Team-Bereichs eingeben.');
-  return p;
-}
+const loggedIn = () => !!(store.get('drv.login') && store.get('drv.pass'));
+function logoutLocal() { ['drv.login', 'drv.pass', 'drv.team', 'drv.admin'].forEach(k => store.del(k)); }
+/* Jeder Datenbank-Aufruf schickt Anmeldename und Passwort mit; die Datenbank prüft sie jedes Mal. */
 async function rpc(name, body) {
-  const pass = getPass();
+  if (!loggedIn()) throw new Error('Bitte zuerst anmelden.');
   try {
-    return await remote('rpc/' + name, { method: 'POST', body: JSON.stringify(Object.assign({ p_pass: pass }, body)) });
+    return await remote('rpc/' + name, { method: 'POST', body: JSON.stringify(Object.assign(
+      { p_login: store.get('drv.login'), p_pass: store.get('drv.pass') }, body)) });
   } catch (e) {
-    if (/passwort/i.test(e.message)) store.del('drv.pass');
+    if (/login falsch/i.test(e.message)) logoutLocal();
     throw e;
   }
 }
+// Nur für Admins von Bedeutung: welches Team gerade geöffnet ist.
+const teamArg = () => ({ p_team: store.get('drv.team') || null });
 const memCache = new Map();
 async function getMatch(id, force) {
   id = String(id);
@@ -468,9 +496,13 @@ function sideLabel(m, r) {
 function showTab(name) {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   $('tab-match').hidden = name !== 'match';
+  if (name === 'admin' && !(isAdmin && loggedIn())) name = 'opp';
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   $('tab-opp').hidden = name !== 'opp';
+  $('tab-admin').hidden = name !== 'admin';
   store.set('drv.tab', name);
   if (name === 'opp') openOpp();
+  if (name === 'admin') openAdmin();
 }
 document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
 
@@ -656,15 +688,22 @@ let oppLoadToken = 0;
 const saveLocal = () => { if (!SHARED) store.set('drv.opps', opps); store.set('drv.cur', curId); };
 const cleanRow = r => ({ id: r.id, name: r.name, matches: Array.isArray(r.matches) ? r.matches : [] });
 let spaceName = '';
+let isAdmin = store.get('drv.admin') === true;
 function showTeam(name) {
   spaceName = name || '';
-  if (spaceName) store.set('drv.space', spaceName); else store.del('drv.space');
-  $('teamBadge').textContent = 'Angemeldet: ' + spaceName;
-  $('teamBadge').hidden = !spaceName;
+  const login = store.get('drv.login') || '';
+  const on = SHARED && loggedIn();
+  $('teamBadge').hidden = !on;
+  $('logoutBtn').hidden = !on;
+  $('adminTabBtn').hidden = !(on && isAdmin);
+  $('teamBadge').textContent = isAdmin
+    ? 'Angemeldet: ' + login + ' (Admin)' + (spaceName ? ' · Team: ' + spaceName : '')
+    : 'Angemeldet: ' + (spaceName || login);
 }
 async function syncOpps() {
   if (!SHARED) return;
-  const d = await rpc('drv_list', {});
+  const d = await rpc('drv_list', teamArg());
+  isAdmin = !!d.admin; store.set('drv.admin', isAdmin);
   showTeam(d.space);
   opps = (d.opponents || []).map(cleanRow);
 }
@@ -672,10 +711,10 @@ async function syncOpps() {
    Stand geholt, damit gleichzeitige Änderungen von anderen nicht überschrieben werden. */
 async function mutate(o, fn) {
   if (SHARED) {
-    const row = ((await rpc('drv_list', {})).opponents || []).find(r => r.id === o.id);
+    const row = ((await rpc('drv_list', teamArg())).opponents || []).find(r => r.id === o.id);
     if (row) Object.assign(o, cleanRow(row));
     fn(o);
-    await rpc('drv_save', { p_id: o.id, p_name: o.name, p_matches: o.matches });
+    await rpc('drv_save', Object.assign(teamArg(), { p_id: o.id, p_name: o.name, p_matches: o.matches }));
   } else fn(o);
   saveLocal();
 }
@@ -685,7 +724,7 @@ async function change(o, fn) {
     setStatus('oppStatus', 'Nicht gespeichert: ' + e.message, true);
     if (SHARED) {
       await syncOpps().catch(() => {});
-      if (!store.get('drv.pass')) showLogin('Das Passwort stimmt nicht mehr. Bitte neu eingeben.');
+      if (!loggedIn()) showLogin('Die Anmeldung gilt nicht mehr. Bitte neu anmelden.');
     }
     return false;
   } finally {
@@ -697,10 +736,11 @@ async function change(o, fn) {
   }
 }
 const oppHint = () => SHARED
-  ? 'Team-Bereich „' + spaceName + '“. Alle mit diesem Passwort sehen und bearbeiten dieselben Gegner.'
+  ? 'Team-Bereich „' + spaceName + '“. Alle Mitglieder des Teams sehen und bearbeiten dieselben Gegner.'
   : 'Gegner werden nur in diesem Browser gespeichert. Mit „Link teilen“ bekommen Freunde denselben Gegner mit allen Matches.';
-const LOGIN_HINT = 'Jedes Team hat ein eigenes Passwort und sieht damit nur seine eigenen Gegner.';
+const LOGIN_HINT = 'Jedes Team meldet sich mit seinem Teamnamen und Passwort an und sieht nur seine eigenen Gegner.';
 function showLogin(message) {
+  isAdmin = false;
   showTeam('');
   $('oppLogin').hidden = false; $('oppMain').hidden = true; $('oppBody').hidden = true;
   setStatus('oppLoginStatus', message || LOGIN_HINT, !!message);
@@ -728,16 +768,23 @@ function renderOppSelect() {
 }
 
 async function openOpp() {
-  $('oppLogout').hidden = !SHARED;
   if (SHARED) {
-    if (!store.get('drv.pass')) return showLogin();
+    if (!loggedIn()) return showLogin();
     try { await syncOpps(); }
     catch (e) {
-      if (!store.get('drv.pass')) return showLogin('Passwort falsch.');
+      if (!loggedIn()) return showLogin('Teamname oder Passwort falsch.');
+      // Das zuletzt geöffnete Team wurde inzwischen umbenannt oder gelöscht.
+      if (/team nicht gefunden/i.test(e.message) && store.get('drv.team')) { store.del('drv.team'); return openOpp(); }
       $('oppLogin').hidden = true; $('oppMain').hidden = false;
       return setStatus('oppStatus', 'Gegner konnten nicht geladen werden: ' + e.message, true);
     }
     $('oppLogin').hidden = true; $('oppMain').hidden = false;
+    const noTeam = isAdmin && !spaceName;
+    $('oppBar').hidden = noTeam;
+    if (noTeam) {
+      opps = []; $('oppBody').hidden = true;
+      return setStatus('oppStatus', 'Du bist als Admin angemeldet. Öffne im Reiter „Verwaltung“ ein Team, um dessen Gegner zu sehen.');
+    }
     setStatus('oppStatus', oppHint());
   }
   renderOppSelect();
@@ -1056,23 +1103,92 @@ $('oppRename').addEventListener('click', () => {
 $('oppDelete').addEventListener('click', async () => {
   const o = curOpp(); if (!o) return;
   if (!confirm('Gegner „' + o.name + '“ mit ' + o.matches.length + ' Matches löschen?')) return;
-  try { if (SHARED) await rpc('drv_delete', { p_id: o.id }); }
+  try { if (SHARED) await rpc('drv_delete', Object.assign(teamArg(), { p_id: o.id })); }
   catch (e) { return setStatus('oppStatus', 'Nicht gelöscht: ' + e.message, true); }
   opps = opps.filter(x => x.id !== o.id); curId = opps.length ? opps[0].id : null; saveLocal(); openOpp();
 });
-$('oppLoginForm').addEventListener('submit', e => {
+$('oppLoginForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const p = $('oppPassInput').value.trim();
-  if (!p) return;
+  const l = $('oppLoginInput').value.trim(), p = $('oppPassInput').value.trim();
+  if (!l || !p) return;
   $('oppPassInput').value = '';
-  store.set('drv.pass', p);
-  setStatus('oppLoginStatus', 'Prüfe Passwort …');
-  openOpp();
+  logoutLocal();
+  store.set('drv.login', l); store.set('drv.pass', p);
+  setStatus('oppLoginStatus', 'Prüfe Anmeldung …');
+  await openOpp();
+  if (isAdmin) showTab('admin');
 });
-$('oppLogout').addEventListener('click', () => {
-  store.del('drv.pass'); opps = []; oppData = null;
-  openOpp();
+$('logoutBtn').addEventListener('click', () => {
+  logoutLocal(); opps = []; oppData = null; isAdmin = false;
+  showTab('opp');
 });
+
+/* ===================== Verwaltung (nur Admin) ===================== */
+async function openAdmin() {
+  let rows;
+  try { rows = await rpc('drv_admin_list', {}); }
+  catch (e) {
+    if (!loggedIn()) return showTab('opp');
+    return setStatus('adminStatus', 'Teams konnten nicht geladen werden: ' + e.message, true);
+  }
+  const body = $('adminRows');
+  body.replaceChildren();
+  if (!rows.length) body.append(emptyRow(4, 'Noch keine Teams angelegt.'));
+  const open = store.get('drv.team');
+  rows.forEach(t => {
+    const tr = el('tr');
+    tr.append(el('td', null, t.name + (open === t.name ? ' (geöffnet)' : '')), el('td', 'num', t.opponents),
+      el('td', 'muted', t.created_at ? new Date(t.created_at).toLocaleDateString('de-DE') : '–'));
+    const td = el('td');
+    const btn = (text, fn) => { const b = el('button', 'secondary mini', text); b.style.marginRight = '4px'; b.addEventListener('click', fn); td.append(b); };
+    btn('Gegner öffnen', () => { store.set('drv.team', t.name); showTab('opp'); });
+    btn('Umbenennen', () => {
+      const n = (prompt('Neuer Teamname (ist zugleich der Anmeldename):', t.name) || '').trim();
+      if (!n || n === t.name) return;
+      adminAction(async () => {
+        await rpc('drv_admin_rename', { p_name: t.name, p_new_name: n });
+        if (store.get('drv.team') === t.name) store.set('drv.team', n);
+      }, '„' + t.name + '“ heißt jetzt „' + n + '“. Das Team meldet sich ab sofort mit dem neuen Namen an.');
+    });
+    btn('Passwort ändern', () => {
+      const n = (prompt('Neues Passwort für „' + t.name + '“ (mindestens 8 Zeichen):') || '').trim();
+      if (!n) return;
+      adminAction(() => rpc('drv_admin_set_pass', { p_name: t.name, p_new_pass: n }), 'Passwort für „' + t.name + '“ geändert.');
+    });
+    btn('Löschen', () => {
+      if (!confirm('Team „' + t.name + '“ mit allen ' + t.opponents + ' Gegnern endgültig löschen?')) return;
+      adminAction(async () => {
+        await rpc('drv_admin_delete', { p_name: t.name });
+        if (store.get('drv.team') === t.name) store.del('drv.team');
+      }, 'Team „' + t.name + '“ gelöscht.');
+    });
+    tr.append(td);
+    body.append(tr);
+  });
+}
+async function adminAction(fn, okText) {
+  try { await fn(); setStatus('adminStatus', okText); }
+  catch (e) { setStatus('adminStatus', 'Nicht ausgeführt: ' + e.message, true); }
+  if (loggedIn()) openAdmin(); else showTab('opp');
+}
+$('adminCreateForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const n = $('adminNewName').value.trim(), p = $('adminNewPass').value.trim();
+  if (!n || !p) return setStatus('adminStatus', 'Bitte Teamname und Passwort eintragen.', true);
+  adminAction(async () => {
+    await rpc('drv_admin_create', { p_name: n, p_new_pass: p });
+    $('adminNewName').value = ''; $('adminNewPass').value = '';
+  }, 'Team „' + n + '“ angelegt. Anmeldung mit Teamname „' + n + '“ und dem eben vergebenen Passwort.');
+});
+$('adminOwnPass').addEventListener('click', () => {
+  const n = (prompt('Neues Admin-Passwort (mindestens 8 Zeichen):') || '').trim();
+  if (!n) return;
+  adminAction(async () => {
+    await rpc('drv_admin_set_pass', { p_name: store.get('drv.login'), p_new_pass: n });
+    store.set('drv.pass', n);
+  }, 'Admin-Passwort geändert.');
+});
+
 $('oppUpload').addEventListener('click', async () => {
   const local = store.get('drv.opps') || [];
   if (!confirm(local.length + ' Gegner aus diesem Browser in die gemeinsame Datenbank hochladen?')) return;
@@ -1134,7 +1250,8 @@ $('oppAddForm').addEventListener('submit', async e => {
 /* ---------- Start ---------- */
 (async function init() {
   // Teamnamen sofort zeigen, auch wenn die Seite im Reiter „Einzelnes Match“ startet.
-  if (SHARED && store.get('drv.pass')) showTeam(store.get('drv.space'));
+  if (SHARED && store.get('drv.pass') && !store.get('drv.login')) logoutLocal(); // alte Anmeldung ohne Teamnamen
+  showTeam('');
   setStatus('oppStatus', oppHint());
   const q = new URLSearchParams(location.search);
   const imp = q.get('import');
@@ -1159,6 +1276,7 @@ $('oppAddForm').addEventListener('submit', async e => {
   if (initial && /^\d{6,}$/.test(initial)) { $('matchInput').value = initial; showTab('match'); return load(initial); }
   // Mit Team-Bereichen startet die Seite bei der Passwort-Abfrage bzw. im eigenen Bereich.
   const saved = store.get('drv.tab');
+  if (saved === 'admin' && isAdmin && loggedIn()) return showTab('admin');
   showTab(saved === 'opp' || (SHARED && saved !== 'match') ? 'opp' : 'match');
 })();
 </script>
