@@ -4,47 +4,129 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dota 2 Replay Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600&family=Rajdhani:wght@500;600;700&family=Saira:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+  /* Optik „Hauptmenü“ (Halo-Stil). Die Minimap (.map, .pin, .spot, .legend, .dot, canvas)
+     bleibt bewusst unverändert. */
   :root {
-    --bg: #12161c; --panel: #1b212a; --line: #2c3540; --text: #e6e9ed; --muted: #8b96a3;
-    --radiant: #66bb6a; --dire: #ef5350; --obs: #f5c542; --sen: #4fa8f5; --accent: #5b9dff;
+    --bg: #050a12;         /* Seitengrund, Blau-Schwarz */
+    --bg-glow: #0d2a44;    /* Lichtschein oben */
+    --panel: #0a1521;      /* Panel-Fläche */
+    --panel-2: #0f1f30;    /* Tabellenkopf */
+    --input-bg: #060e18;   /* Eingaben, Listen, Chips */
+    --line: #1a3448;       /* Tabellenlinien */
+    --panel-bd: #1f5878;   /* Panelkante */
+    --edge: #2b7fa6;       /* Kante interaktiver Elemente (>= 3:1) */
+    --accent: #3fd6ff;     /* Leitfarbe Cyan */
+    --accent-hi: #8be8ff;
+    --accent-ink: #02121b; /* Text auf Cyan */
+    --text: #dcecf7;
+    --muted: #8aa6bd;
+    --head: #a6ecff;       /* h2 */
+    --th: #7fcde6;         /* Tabellenkopf-Text */
+    --row-hover: #0f2a40;
+    --scan: rgba(140, 220, 255, .045);
+    --grid: rgba(63, 214, 255, .05);
+    --glow: 0 0 8px rgba(63, 214, 255, .6);
+    --title-shadow: 0 0 14px rgba(63, 214, 255, .45);
+    --hover-inset: inset 0 0 14px rgba(63, 214, 255, .35);
+    --btn-fill: #3fd6ff; --btn-fill-hover: #8be8ff; --btn-bd: #3fd6ff; --btn-ink: #02121b;
+    --sec-fill: #0d2335; --sec-fill-hover: #113049; --sec-bd: #2b7fa6; --sec-ink: #dcecf7;
+    --tab-bd: #1f4560;
+    --radiant: #7ddc6f; --dire: #ff6b6b; --obs: #f5c542; --sen: #4fa8f5;
+    --cut: 14px; --cut-s: 7px; --tick: 96px; --tick2: 28px;
+    --mark-w: 7px; --mark-h: 7px; --mark-r: 45deg;
+    --head-track: .16em; --head-weight: 700;
+    --font-body: "Saira", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-head: "Rajdhani", "Saira", system-ui, sans-serif;
+    --font-title: "Orbitron", "Rajdhani", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  html { color-scheme: dark; background: var(--bg); }
+  body { margin: 0; min-height: 100vh; color: var(--text);
+    font: 15px/1.5 var(--font-body);
+    background:
+      repeating-linear-gradient(var(--scan) 0 1px, transparent 1px 3px),
+      radial-gradient(ellipse 90% 420px at 50% -120px, var(--bg-glow), transparent 75%),
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 48px 48px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 48px 48px,
+      var(--bg); }
   main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
-  h1 { font-size: 22px; margin: 0; }
-  .top { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between;
-    margin-bottom: 14px; }
-  .badge { background: var(--panel); border: 1px solid var(--accent); border-radius: 16px;
-    padding: 4px 12px; font-size: 14px; font-weight: 600; }
-  h2 { font-size: 17px; margin: 0 0 12px; }
-  h3 { font-size: 14px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    padding: 16px; margin-bottom: 16px; }
+
+  /* Abgeschrägte Ecken (oben links, unten rechts) mit sichtbarer Kante auf der Schräge.
+     Jedes Element setzt --k (Schnitt), --bd (Kante), --fill (Fläche), --deco (Zusatzebene). */
+  .panel, .badge, .chip, button {
+    clip-path: polygon(var(--k) 0, 100% 0, 100% calc(100% - var(--k)), calc(100% - var(--k)) 100%, 0 100%, 0 var(--k));
+    border: 1px solid var(--bd);
+    background:
+      linear-gradient(135deg, transparent calc(50% - 1px), var(--bd) 0 calc(50% + 1px), transparent 0) 0 0 / var(--k) var(--k) no-repeat border-box,
+      linear-gradient(135deg, transparent calc(50% - 1px), var(--bd) 0 calc(50% + 1px), transparent 0) 100% 100% / var(--k) var(--k) no-repeat border-box,
+      var(--deco),
+      var(--fill);
+  }
+
+  .top { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: space-between;
+    margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--edge);
+    border-image: linear-gradient(90deg, var(--accent), var(--edge) 35%, transparent) 1; }
+  h1 { margin: 0; font: 600 clamp(17px, 4.4vw, 22px)/1.2 var(--font-title); text-transform: uppercase;
+    letter-spacing: .1em; color: var(--text); text-shadow: var(--title-shadow); }
+  .badge { --k: var(--cut-s); --bd: var(--edge); --fill: var(--input-bg); --deco: none;
+    padding: 4px 14px; font: 600 14px/1.4 var(--font-head); text-transform: uppercase; letter-spacing: .08em;
+    color: var(--accent); }
+  h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 14px;
+    font: var(--head-weight) 18px/1.2 var(--font-head); text-transform: uppercase;
+    letter-spacing: var(--head-track); color: var(--head); }
+  h2::before { content: ""; flex: none; width: var(--mark-w); height: var(--mark-h); background: var(--accent);
+    transform: rotate(var(--mark-r)); box-shadow: var(--glow); margin: 0 2px; }
+  h2::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--edge), transparent); }
+  h3 { margin: 0 0 8px; font: 600 13px/1.3 var(--font-head); text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted); }
+  .panel { --k: var(--cut); --bd: var(--panel-bd); --fill: var(--panel);
+    --deco:
+      linear-gradient(var(--accent), var(--accent)) calc(var(--cut) + 6px) 0 / var(--tick) 2px no-repeat border-box,
+      linear-gradient(var(--accent), var(--accent)) calc(100% - var(--cut) - 6px) 100% / var(--tick2) 2px no-repeat border-box,
+      repeating-linear-gradient(var(--scan) 0 1px, transparent 1px 3px);
+    padding: 18px; margin-bottom: 18px; }
   form, .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  input[type=text], input[type=password], select { padding: 10px 12px; font-size: 16px; min-width: 0;
-    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; }
+  input[type=text], input[type=password], select { padding: 10px 12px; font: 16px/1.3 var(--font-body); min-width: 0;
+    background-color: var(--input-bg); color: var(--text); border: 1px solid var(--edge); border-radius: 0; }
+  input::placeholder { color: var(--muted); opacity: 1; }
   input[type=text], input[type=password] { flex: 1 1 220px; }
-  select.compact { padding: 5px 8px; font-size: 13px; max-width: 240px; }
-  button { padding: 10px 16px; font-size: 15px; border: 0; border-radius: 8px; cursor: pointer;
-    background: var(--accent); color: #fff; font-weight: 600; }
-  button.secondary { background: var(--line); color: var(--text); }
-  button.mini { padding: 4px 9px; font-size: 12px; }
-  button:disabled { opacity: .5; cursor: default; }
+  select { appearance: none; -webkit-appearance: none; padding-right: 32px; cursor: pointer;
+    background:
+      linear-gradient(45deg, transparent 50%, var(--accent) 50%) right 16px center / 6px 6px no-repeat,
+      linear-gradient(135deg, var(--accent) 50%, transparent 50%) right 10px center / 6px 6px no-repeat,
+      var(--input-bg); }
+  select.compact { padding: 6px 30px 6px 9px; font-size: 13px; max-width: 240px; }
+  input[type=text]:focus-visible, input[type=password]:focus-visible, select:focus-visible {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--glow); }
+  input[type=checkbox], input[type=range] { accent-color: var(--accent); }
+  button { --k: var(--cut-s); --fill: var(--btn-fill); --bd: var(--btn-bd); --deco: none;
+    color: var(--btn-ink); padding: 10px 18px; border-radius: 0; cursor: pointer;
+    font: 700 15px/1.2 var(--font-head); text-transform: uppercase; letter-spacing: .1em;
+    transition: color .12s, box-shadow .12s; }
+  button:hover { --fill: var(--btn-fill-hover); box-shadow: var(--hover-inset); }
+  button:focus-visible { outline: 2px solid currentColor; outline-offset: -5px; }
+  button.secondary { --fill: var(--sec-fill); --bd: var(--sec-bd); color: var(--sec-ink); }
+  button.secondary:hover { --fill: var(--sec-fill-hover); --bd: var(--accent); color: var(--accent-hi); }
+  button.mini { --k: 5px; padding: 4px 10px; font-size: 13px; letter-spacing: .08em; }
+  button:disabled { opacity: .45; cursor: default; pointer-events: none; }
   .muted { color: var(--muted); }
   .small { font-size: 13px; }
   .radiant { color: var(--radiant); } .dire { color: var(--dire); }
   .status { margin-top: 10px; min-height: 1.4em; }
-  .status.error { color: var(--dire); }
+  .status.error { color: var(--dire); padding-left: 10px; border-left: 2px solid var(--dire); }
   [hidden] { display: none !important; }
 
-  .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
-  .tabs button { background: var(--panel); color: var(--muted); border: 1px solid var(--line); }
-  .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+  .tabs button { --fill: var(--panel); --bd: var(--tab-bd); color: var(--muted); }
+  .tabs button:hover { --fill: var(--sec-fill-hover); --bd: var(--edge); color: var(--text); }
+  .tabs button.on { --fill: var(--btn-fill); --bd: var(--btn-bd); color: var(--btn-ink); }
 
   .summary { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
-  .summary .score { font-size: 20px; font-weight: 700; }
+  .summary .score { font: 700 22px/1.2 var(--font-head); letter-spacing: .04em; font-variant-numeric: tabular-nums; }
 
   /* Draft */
   .draft-scroll { overflow-x: auto; padding-bottom: 6px; }
@@ -54,12 +136,13 @@
     display: flex; align-items: center; font-weight: 700; padding-right: 8px; width: 78px; }
   .draft .num { text-align: center; color: var(--muted); font-size: 12px; }
   .slot { height: 74px; }
-  .card { border-radius: 6px; overflow: hidden; background: var(--bg); border: 2px solid var(--line);
+  .card { border-radius: 2px; overflow: hidden; background: var(--input-bg); border: 2px solid var(--line);
     height: 100%; display: flex; flex-direction: column; }
   .card img { width: 100%; height: 42px; object-fit: cover; display: block; }
   .card .cap { font-size: 11px; text-align: center; padding: 2px 2px 0; line-height: 1.25;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .card .kind { font-size: 10px; text-align: center; text-transform: uppercase; letter-spacing: .05em; }
+  .card .kind { font-size: 10px; text-align: center; text-transform: uppercase; letter-spacing: .08em;
+    font-family: var(--font-head); }
   .card.pick.radiant-b { border-color: var(--radiant); }
   .card.pick.dire-b { border-color: var(--dire); }
   .card.ban img { filter: grayscale(1) brightness(.55); }
@@ -95,32 +178,48 @@
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }
 
   /* Tabellen */
-  .list { max-height: 640px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .list { max-height: 640px; overflow: auto; border: 1px solid var(--line); background: var(--input-bg);
+    scrollbar-color: var(--edge) transparent; }
   .list.short { max-height: 360px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; z-index: 1; }
-  td.t, td.num { font-variant-numeric: tabular-nums; font-weight: 700; }
+  th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); color: var(--th);
+    font: 600 13px/1.3 var(--font-head); text-transform: uppercase; letter-spacing: .08em;
+    border-bottom-color: var(--edge); }
+  td.t, td.num { font-variant-numeric: tabular-nums; font-weight: 600; }
   tr.click { cursor: pointer; }
-  tr.click:hover, tbody tr.hl { background: #263040; }
+  tr.click:hover, tbody tr.hl { background: var(--row-hover); }
+  tr.click:hover > td:first-child, tbody tr.hl > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
   tbody tr.off { opacity: .4; }
   td img, .chip img { height: 18px; vertical-align: -4px; margin-right: 6px; border-radius: 2px; }
   td.wrap { white-space: normal; }
-  .chip { display: inline-block; background: var(--bg); border: 1px solid var(--line); border-radius: 12px;
-    padding: 1px 8px 1px 4px; margin: 2px 4px 2px 0; font-size: 12px; white-space: nowrap; }
+  .chip { --k: 5px; --bd: var(--line); --fill: var(--panel-2); --deco: none;
+    display: inline-block; padding: 1px 9px 1px 5px; margin: 2px 4px 2px 0; font-size: 12px; white-space: nowrap; }
   .chip img { margin-right: 4px; }
   .map canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .hgrid { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
-  .htile { position: relative; width: 64px; height: 36px; border-radius: 4px; overflow: hidden;
+  .htile { position: relative; width: 64px; height: 36px; border-radius: 2px; overflow: hidden;
     border: 2px solid transparent; background: #000; }
   .htile img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .htile.off img { filter: grayscale(1); opacity: .22; }
   .htile b { position: absolute; right: 0; bottom: 0; font-size: 11px; line-height: 1.3; padding: 0 4px;
-    color: #111; border-radius: 4px 0 0 0; }
+    color: #111; border-radius: 2px 0 0 0; }
   .cols2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
   @media (max-width: 860px) { .cols2 { grid-template-columns: minmax(0, 1fr); } }
   .cols2 > div, .wards > div { min-width: 0; }
   .warn { color: var(--obs); }
+
+  /* Minimap und Legende behalten die bisherigen Radiant/Dire-Töne (Pin-Ringe, Legendenpunkte),
+     damit sich die Karte durch die neuen Farb-Tokens nicht verändert. */
+  .map, .legend { --radiant: #66bb6a; --dire: #ef5350; }
+
+  @media (max-width: 480px) {
+    main { padding: 14px 12px 48px; }
+    .panel { padding: 14px; }
+    h2 { font-size: 16px; }
+    .tabs button { padding: 8px 10px; font-size: 14px; letter-spacing: .05em; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
