@@ -6,6 +6,10 @@
 // Antwort: { id, players: [{ h, r, aid, g: [[x,y,n,...], ...4 Zeitabschnitte] }] }
 //          x/y = Kartenzelle (64..192, auf 2er-Raster), n = Sekunden an dieser Stelle.
 //          Zeitabschnitte: 0–10, 10–20, 20–30, ab 30 Minuten.
+//
+// Liga:    GET /functions/v1/drv-pos?league=<Liga-ID>
+// Antwort: { league: { id, name }, teams: [{ id, name, tag, matches: [{ id, start, side, win }] }] }
+//          side = 'r' oder 'd' (Seite des Teams in diesem Match), win = Team hat gewonnen.
 // Diagnose: ?probe=<GraphQL-Typname> zeigt die Felder eines Typs,
 //           ?match=<ID>&raw=1 zeigt die ersten Rohwerte.
 
@@ -15,11 +19,41 @@ const CORS = {
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
-const json = (body: unknown, status = 200) =>
+const json = (body: unknown, status = 200, maxAge = 86400) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": status === 200 ? "public, max-age=86400" : "no-store" },
+    headers: { ...CORS, "Content-Type": "application/json", "Cache-Control": status === 200 ? "public, max-age=" + maxAge : "no-store" },
   });
+
+// Alle Matches einer Liga holen und nach Teams gruppieren.
+async function league(id: string) {
+  const all: any[] = [];
+  let name = "";
+  for (let skip = 0; skip < 2000; skip += 100) {
+    const d = await stratz(`{ league(id: ${id}) { id displayName name
+      matches(request: { skip: ${skip}, take: 100 }) {
+        id startDateTime didRadiantWin radiantTeamId direTeamId
+        radiantTeam { id name tag } direTeam { id name tag }
+      } } }`);
+    if (!d.league) throw new Error("Liga bei STRATZ nicht gefunden");
+    name = d.league.displayName || d.league.name || name;
+    const ms = d.league.matches || [];
+    all.push(...ms);
+    if (ms.length < 100) break;
+  }
+  const teams = new Map<number, any>();
+  for (const m of all) {
+    for (const [side, tid, t] of [["r", m.radiantTeamId, m.radiantTeam], ["d", m.direTeamId, m.direTeam]] as const) {
+      if (!tid) continue;
+      const e = teams.get(tid) || { id: tid, name: (t && t.name) || ("Team " + tid), tag: (t && t.tag) || null, matches: [] };
+      e.matches.push({ id: m.id, start: m.startDateTime || 0, side, win: side === "r" ? !!m.didRadiantWin : !m.didRadiantWin });
+      teams.set(tid, e);
+    }
+  }
+  const list = [...teams.values()].sort((a, b) => b.matches.length - a.matches.length || a.name.localeCompare(b.name));
+  list.forEach((t) => t.matches.sort((a: any, b: any) => b.start - a.start));
+  return { league: { id: Number(id), name }, teams: list };
+}
 
 async function stratz(query: string) {
   const token = Deno.env.get("STRATZ_TOKEN");
@@ -49,7 +83,13 @@ Deno.serve(async (req) => {
     if (probe) {
       if (!/^[A-Za-z_]{1,60}$/.test(probe)) return json({ error: "Ungültiger Typname" }, 400);
       return json(await stratz(
-        `{ __type(name: "${probe}") { name fields { name type { name kind ofType { name kind ofType { name } } } } } }`));
+        `{ __type(name: "${probe}") { name fields { name args { name type { name kind ofType { name } } } type { name kind ofType { name kind ofType { name } } } } inputFields { name type { name kind ofType { name } } } } }`));
+    }
+
+    const lg = url.searchParams.get("league");
+    if (lg) {
+      if (!/^\d{1,9}$/.test(lg)) return json({ error: "Ungültige Liga-ID" }, 400);
+      return json(await league(lg), 200, 600);
     }
 
     const id = url.searchParams.get("match") || "";
