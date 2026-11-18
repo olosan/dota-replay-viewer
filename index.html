@@ -298,7 +298,7 @@
       </div>
 
       <div class="panel">
-        <h2>Positionen in den ersten 10 Minuten</h2>
+        <h2>Positionen der Helden</h2>
         <div class="wards">
           <div>
             <div class="map"><img class="bg" id="posMapImg" alt="Dota 2 Karte">
@@ -308,6 +308,13 @@
             <div class="controls" style="margin-top:0">
               <select id="posPlayer" class="compact" aria-label="Spieler"></select>
               <select id="posHero" class="compact" aria-label="Held"></select>
+              <select id="posTime" class="compact" aria-label="Spielzeit">
+                <option value="all">Ganzes Spiel</option>
+                <option value="0">0–10 Minuten</option>
+                <option value="1">10–20 Minuten</option>
+                <option value="2">20–30 Minuten</option>
+                <option value="3">ab 30 Minuten</option>
+              </select>
               <select id="posSide" class="compact" aria-label="Seite">
                 <option value="a">Beide Seiten</option>
                 <option value="r">Nur als Radiant</option>
@@ -540,6 +547,42 @@ async function getMatch(id, force) {
   if (s.parsed) store.set('drv.m.' + id, s);
   return s;
 }
+/* Positionen über das ganze Spiel kommen von STRATZ, über die Supabase-Function drv-pos
+   (sie hält den STRATZ-Token geheim). Ergebnis je Match: Spieler mit vier Zeitabschnitten
+   (0–10, 10–20, 20–30, ab 30 Min.), jeweils flache Liste x,y,Wert im Raster von packPos. */
+const posCache = new Map(); // Match-ID -> { players } oder { err }
+let posLoading = false;
+async function getPos(id) {
+  id = String(id);
+  if (posCache.has(id)) return posCache.get(id);
+  let res;
+  try {
+    const r = await fetch(CONFIG.url + '/functions/v1/drv-pos?match=' + encodeURIComponent(id));
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.players) throw new Error(d.error || ('Fehler ' + r.status));
+    res = { players: d.players.map(p => ({ h: p.h, r: p.r ? 1 : 0,
+      g: p.g.map(a => { const o = []; for (let i = 0; i < a.length; i += 3) o.push(a[i] >> 1, a[i + 1] >> 1, a[i + 2]); return o; }) })) };
+  } catch (e) { res = { err: e.message }; }
+  posCache.set(id, res);
+  return res;
+}
+/* Fehlende Positionsdaten im Hintergrund nachladen und danach neu zeichnen. */
+async function loadOppPos(o) {
+  if (!SHARED || posLoading) return;
+  const ids = o.matches.map(x => String(x.id)).filter(id => memCache.has(id) && !posCache.has(id));
+  if (!ids.length) return;
+  posLoading = true;
+  let done = 0, next = 0;
+  const worker = async () => {
+    while (next < ids.length) {
+      await getPos(ids[next++]); done++;
+      if (curOpp() === o) $('posCount').textContent = 'Lade Positionen über das ganze Spiel … ' + done + ' von ' + ids.length;
+    }
+  };
+  try { await Promise.all([worker(), worker()]); } finally { posLoading = false; }
+  if (curOpp() === o) computeOpp();
+}
+
 const teamName = (m, r) => (r ? m.rn : m.dn) || (r ? 'Radiant' : 'Dire');
 function sideLabel(m, r) {
   const name = r ? m.rn : m.dn;
@@ -951,7 +994,7 @@ function renderHeroGrid() {
   $('hgCount').textContent = used + ' verschiedene Helden in ' + oppData.games + ' Matches. Gelb = selten, Rot = am häufigsten (' + max + '×).';
 }
 
-/* Positions-Heatmap: wo sich die Helden in den ersten 10 Minuten aufhalten. */
+/* Positions-Heatmap: wo sich die Helden aufhalten (STRATZ ganzes Spiel, sonst OpenDota erste 10 Minuten). */
 function fillPosFilters() {
   const keep = (id, options) => {
     const sel = $(id), old = sel.value;
@@ -971,30 +1014,39 @@ function heatColor(t) { // blau -> grün -> gelb -> rot
 }
 function renderPos() {
   if (!oppData) return;
-  const pl = $('posPlayer').value, he = $('posHero').value, side = $('posSide').value;
+  const pl = $('posPlayer').value, he = $('posHero').value, side = $('posSide').value, tm = $('posTime').value;
   const sel = oppData.pos.filter(p => (pl === 'all' || String(p.aid) === pl) && (he === 'all' || String(p.h) === he)
     && (side === 'a' || (side === 'r') === !!p.r));
   const acc = new Map();
-  sel.forEach(p => {
-    for (let i = 0; i < p.lp.length; i += 3) {
-      const k = p.lp[i] * 256 + p.lp[i + 1];
-      acc.set(k, (acc.get(k) || 0) + p.lp[i + 2]);
+  const add = a => {
+    for (let i = 0; i < a.length; i += 3) {
+      const k = a[i] * 256 + a[i + 1];
+      acc.set(k, (acc.get(k) || 0) + a[i + 2]);
     }
+  };
+  let used = 0, partial = 0, waiting = 0;
+  sel.forEach(p => {
+    if (p.g) { (tm === 'all' ? p.g : [p.g[+tm]]).forEach(add); used++; }
+    else if (tm === 'all' || tm === '0') { add(p.lp); used++; if (p.wait) waiting++; else partial++; }
+    else if (p.wait) waiting++;
   });
   const cv = $('posCanvas'), ctx = cv.getContext('2d'), W = cv.width;
   ctx.clearRect(0, 0, W, W);
-  $('posCount').textContent = sel.length
-    ? sel.length + ' Einsätze ausgewertet. Rot = dort hält sich der Gegner am längsten auf. Erfasst sind nur die ersten 10 Spielminuten.'
-    : 'Keine Positionsdaten für diese Auswahl. Sie gibt es nur für ausgewertete Matches.';
+  $('posCount').textContent = used
+    ? used + ' Einsätze ausgewertet. Rot = dort hält sich der Gegner am längsten auf.'
+      + (partial ? ' Bei ' + partial + ' davon gibt es nur die ersten 10 Minuten (STRATZ hatte keine Daten).' : '')
+      + (waiting ? ' Positionen über das ganze Spiel werden noch geladen …' : '')
+    : (waiting ? 'Positionen werden geladen …' : 'Keine Positionsdaten für diese Auswahl.');
   if (!acc.size) return;
   // Sehr hohe Einzelwerte (z. B. Warten am Brunnen) kappen, damit der Rest sichtbar bleibt.
   const vals = [...acc.values()].sort((a, b) => a - b);
   const cap = vals[Math.floor(vals.length * 0.97)] || 1;
   const rad = W / 127 * 4;
+  const base = used > partial + waiting ? 0.015 : 0.08; // STRATZ-Daten sind viel dichter als die 10-Minuten-Daten
   acc.forEach((v, k) => {
     const px = (((k >> 8) * 2 + 1) - 64) / 127 * W, py = (127 - (((k & 255) * 2 + 1) - 64)) / 127 * W;
     const g = ctx.createRadialGradient(px, py, 0, px, py, rad);
-    g.addColorStop(0, 'rgba(0,0,0,' + (0.08 + 0.5 * Math.min(1, v / cap)) + ')');
+    g.addColorStop(0, 'rgba(0,0,0,' + (base + 0.5 * Math.min(1, v / cap)) + ')');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
     ctx.fillRect(px - rad, py - rad, rad * 2, rad * 2);
@@ -1036,7 +1088,10 @@ function computeOpp(errors) {
       const h = heroesPlayed[p.h] || (heroesPlayed[p.h] = { g: 0, w: 0, by: new Set(), pk: [] });
       h.g++; if (won) h.w++;
       if (p.n) h.by.add(p.n);
-      if (p.lp && p.lp.length) pos.push({ aid: p.aid, h: p.h, r, lp: p.lp });
+      const sp = (posCache.get(String(x.id)) || {}).players;
+      const full = sp && sp.find(q => q.r === r && q.h === p.h);
+      if (full) pos.push({ aid: p.aid, h: p.h, r, g: full.g });
+      else if (p.lp && p.lp.length) pos.push({ aid: p.aid, h: p.h, r, lp: p.lp, wait: !posCache.has(String(x.id)) });
       if (!p.aid) { anon++; return; }
       const pl = players[p.aid] || (players[p.aid] = { name: p.n || ('Spieler ' + p.aid), g: 0, w: 0, last: 0, heroes: {} });
       if (m.start >= pl.last && p.n) { pl.name = p.n; pl.last = m.start; }
@@ -1098,6 +1153,7 @@ function computeOpp(errors) {
   renderHeroGrid();
   fillPosFilters();
   renderPos();
+  loadOppPos(o);
 }
 
 function renderOppMatches(o, errors) {
@@ -1254,7 +1310,7 @@ function renderOppWards() {
 ['owMode', 'owSide', 'owTime', 'owObs', 'owSen'].forEach(id => $(id).addEventListener('input', renderOppWards));
 $('banPhase').addEventListener('input', renderBans);
 $('hgMode').addEventListener('input', renderHeroGrid);
-['posPlayer', 'posHero', 'posSide'].forEach(id => $(id).addEventListener('input', renderPos));
+['posPlayer', 'posHero', 'posSide', 'posTime'].forEach(id => $(id).addEventListener('input', renderPos));
 
 /* ---------- Gegner verwalten ---------- */
 $('oppSelect').addEventListener('change', () => { curId = $('oppSelect').value || null; saveLocal(); openOpp(); });
