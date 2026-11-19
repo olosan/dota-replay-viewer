@@ -92,6 +92,7 @@
   details.league { margin-top: 12px; }
   details.league summary { cursor: pointer; font-family: var(--font-head, inherit); letter-spacing: .06em; text-transform: uppercase; color: var(--accent, inherit); }
   details.league form { margin-top: 10px; }
+  .lg-auto { display: flex; gap: 8px; align-items: center; margin-top: 8px; cursor: pointer; }
   form, .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   input[type=text], input[type=password], select { padding: 10px 12px; font: 16px/1.3 var(--font-body); min-width: 0;
     background-color: var(--input-bg); color: var(--text); border: 1px solid var(--edge); border-radius: 0; }
@@ -328,6 +329,7 @@
         <button id="oppUpload" class="secondary" hidden></button>
       </div>
       <div id="oppStatus" class="status muted small"></div>
+      <div id="lgAutoInfo" class="status muted small"></div>
       <details id="lgBox" class="league">
         <summary>Gegner aus einer Liga übernehmen</summary>
         <form id="lgForm">
@@ -336,6 +338,7 @@
           <button type="submit" id="lgBtn">Nach Spielen suchen</button>
           <button type="button" id="lgUpdate" class="secondary" hidden>Alle übernommenen aktualisieren</button>
         </form>
+        <label class="small lg-auto"><input type="checkbox" id="lgAuto" checked> Neue Liga-Spiele der übernommenen Gegner automatisch holen (beim Öffnen und alle 6 Stunden)</label>
         <div id="lgStatus" class="status muted small"></div>
         <div class="list short" id="lgList" hidden><table>
           <thead><tr><th>Team</th><th>Matches</th><th>Bilanz</th><th>Bei euch</th><th></th></tr></thead>
@@ -1002,6 +1005,7 @@ async function openOpp() {
     setStatus('oppStatus', oppHint());
   }
   renderOppSelect();
+  setTimeout(lgAuto, 0); // im Hintergrund, blockiert das Öffnen nicht
   const o = curOpp();
   if (!o) return;
   const token = ++oppLoadToken;
@@ -1778,22 +1782,76 @@ $('lgForm').addEventListener('submit', e => {
   const linked = idx ? lgTeams(idx).filter(t => lgOpp(t)).map(t => t.id) : [];
   lgCrawl(id, extra, linked, true);
 });
+/* Neue Spiele aller übernommenen Gegner suchen und ergänzen. force = Spieler auch dann prüfen,
+   wenn sie in den letzten 6 Stunden schon geprüft wurden. Ergebnis: Zahl neuer Matches und Gegner, -1 bei Fehler. */
+async function lgUpdateAll(id, force) {
+  const idx = store.get(lgKey(id));
+  if (idx && (!lgData || String(lgData.league.id) !== id)) lgShow(id, idx);
+  // Team-IDs der übernommenen Gegner, auch wenn die Liga in diesem Browser noch nie geladen wurde.
+  const tids = new Set(opps.flatMap(o => o.matches.map(x => x.tid)).filter(Boolean).map(Number));
+  if (lgData) lgData.teams.forEach(t => { if (lgOpp(t)) tids.add(Number(t.id)); });
+  if (!tids.size) return { total: 0, teams: 0 };
+  await lgCrawl(id, [], [...tids], force);
+  let total = 0, teams = 0;
+  for (const t of (lgData ? lgData.teams : [])) {
+    if (!lgOpp(t)) continue;
+    const n = await lgTake(t, false, true);
+    if (n < 0) return { total, teams, failed: true };
+    if (n > 0) { total += n; teams++; }
+  }
+  store.set(lgAutoKey(id), Date.now());
+  return { total, teams };
+}
 $('lgUpdate').addEventListener('click', async () => {
   if (!lgData) return;
   $('lgUpdate').disabled = true;
-  let total = 0, teams = 0;
   try {
     setStatus('lgStatus', 'Suche neue Spiele der übernommenen Gegner …');
-    await lgCrawl(String(lgData.league.id), [], lgData.teams.filter(t => lgOpp(t)).map(t => t.id), true);
-    for (const t of lgData.teams) {
-      if (!lgOpp(t)) continue;
-      const n = await lgTake(t, false, true);
-      if (n < 0) return;
-      if (n > 0) { total += n; teams++; }
-    }
-    setStatus('lgStatus', total ? total + ' neue Match(es) bei ' + teams + ' Gegner(n) ergänzt.' : 'Alle übernommenen Gegner sind aktuell.');
+    const r = await lgUpdateAll(String(lgData.league.id), true);
+    if (r.failed) return;
+    setStatus('lgStatus', r.total ? r.total + ' neue Match(es) bei ' + r.teams + ' Gegner(n) ergänzt.' : 'Alle übernommenen Gegner sind aktuell.');
+    lgAutoShow(String(lgData.league.id));
   } finally { $('lgUpdate').disabled = false; }
 });
+
+/* Automatisch: beim Öffnen der Gegner und danach regelmäßig, höchstens alle 6 Stunden pro Team und Browser.
+   Gespeichert wird in der gemeinsamen Datenbank, also sehen alle im Team die neuen Matches. */
+const LG_AUTO_EVERY = 6 * 3600 * 1000;
+const lgAutoKey = id => 'drv.lgAuto.' + id + '.' + (SHARED ? (spaceName || '-').toLowerCase() : 'local');
+let lgAutoRunning = false, lgAutoNote = '';
+const lgAutoOn = () => store.get('drv.lgAutoOff') !== true;
+const hhmm = t => new Date(t).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+function lgAutoShow(id) {
+  const last = store.get(lgAutoKey(id)) || 0;
+  const linked = opps.some(o => o.matches.some(x => x.tid));
+  $('lgAutoInfo').textContent = !linked ? ''
+    : !lgAutoOn() ? 'Automatische Liga-Aktualisierung ist aus.'
+    : lgAutoRunning ? 'Suche im Hintergrund nach neuen Liga-Spielen der Gegner …'
+    : (lgAutoNote ? lgAutoNote + ' ' : '') + (last ? 'Liga-Spiele zuletzt geprüft: ' + hhmm(last) + ', nächste Prüfung ab ' + hhmm(last + LG_AUTO_EVERY) + '.' : '');
+}
+async function lgAuto() {
+  const id = store.get('drv.league') || DEFAULT_LEAGUE;
+  if (lgAutoRunning) return;
+  if (SHARED && (!loggedIn() || (isAdmin && !spaceName))) { $('lgAutoInfo').textContent = ''; return; }
+  if (!lgAutoOn() || !opps.some(o => o.matches.some(x => x.tid))
+      || Date.now() - (store.get(lgAutoKey(id)) || 0) < LG_AUTO_EVERY) return lgAutoShow(id);
+  lgAutoRunning = true; lgAutoNote = ''; lgAutoShow(id);
+  const team = spaceName;
+  try {
+    const r = await lgUpdateAll(id, false);
+    if (team !== spaceName) return; // inzwischen anderes Team geöffnet
+    lgAutoNote = r.failed ? 'Automatische Aktualisierung fehlgeschlagen.'
+      : r.total ? 'Automatisch ' + r.total + ' neue(s) Match(es) bei ' + r.teams + ' Gegner(n) ergänzt.' : '';
+  } catch (e) {
+    lgAutoNote = 'Automatische Aktualisierung fehlgeschlagen: ' + e.message;
+  } finally { lgAutoRunning = false; lgAutoShow(id); }
+}
+$('lgAuto').checked = lgAutoOn();
+$('lgAuto').addEventListener('change', () => {
+  store.set('drv.lgAutoOff', !$('lgAuto').checked);
+  if ($('lgAuto').checked) lgAuto(); else lgAutoShow(store.get('drv.league') || DEFAULT_LEAGUE);
+});
+setInterval(() => { if (!$('oppMain').hidden) lgAuto(); }, 15 * 60 * 1000);
 $('lgBox').addEventListener('toggle', () => {
   if (!$('lgBox').open) return;
   if (!$('lgInput').value) $('lgInput').value = store.get('drv.league') || DEFAULT_LEAGUE;
