@@ -545,17 +545,60 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
 const OD_DOWN = 'OpenDota ist gerade nicht erreichbar (Störung bei OpenDota, nicht bei dieser Seite). Bitte später noch einmal versuchen.';
+/* Ersatz bei OpenDota-Störung: dieselben Daten von STRATZ über die Supabase-Funktion drv-pos
+   (Antworten im OpenDota-Format). Nach einer Störung 10 Minuten lang direkt STRATZ nehmen. */
+const OD_TIMEOUT = 12000;
+let odDownUntil = 0;
+const viaStratz = () => Date.now() < odDownUntil;
+function stratzUrl(path) {
+  if (!SHARED || !path) return null;
+  const fn = CONFIG.url + '/functions/v1/drv-pos?od=';
+  let m;
+  if ((m = path.match(/^\/matches\/(\d+)$/))) return fn + 'match&id=' + m[1];
+  if ((m = path.match(/^\/players\/(\d+)\/matches\?.*date=(\d+)/))) return fn + 'player&aid=' + m[1] + '&days=' + m[2];
+  if (path === '/constants/heroes') return fn + 'heroes';
+  return null;
+}
+async function stratzGet(path, signal) {
+  let r, d = null;
+  try { r = await fetch(stratzUrl(path), { signal }); d = await r.json().catch(() => null); }
+  catch (e) { throw new Error(signal && signal.aborted ? 'abgebrochen' : OD_DOWN); }
+  if (r.status === 404) throw new Error('Match nicht gefunden (weder bei OpenDota noch bei STRATZ).');
+  if (!r.ok || !d || d.error) throw new Error('OpenDota ist gestört, und der Ersatz über STRATZ klappt auch nicht: ' + ((d && d.error) || ('Fehler ' + r.status)));
+  return d;
+}
+/* Abruf bei OpenDota mit Zeitlimit; bei Störung (keine Antwort oder Fehler 5xx) automatisch STRATZ.
+   Ergebnis: { res } = Antwort von OpenDota oder { data } = fertige Daten von STRATZ. */
+async function odFetch(path, signal) {
+  const alt = stratzUrl(path);
+  if (alt && viaStratz()) return { data: await stratzGet(path, signal) };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), OD_TIMEOUT);
+  const stop = () => ctl.abort();
+  if (signal) signal.addEventListener('abort', stop);
+  let r = null;
+  try { r = await fetch(API + path, { signal: ctl.signal }); } catch (e) { r = null; }
+  finally { clearTimeout(timer); if (signal) signal.removeEventListener('abort', stop); }
+  if (signal && signal.aborted) throw new Error('abgebrochen');
+  if (r && r.status < 500) return { res: r };
+  if (!alt) throw new Error(OD_DOWN);
+  odDownUntil = Date.now() + 10 * 60 * 1000;
+  return { data: await stratzGet(path, signal) };
+}
 async function getJSON(url) {
-  let r;
-  try { r = await fetch(url); } catch (e) { throw new Error(OD_DOWN); }
-  if (r.status >= 500) throw new Error(OD_DOWN);
+  const f = await odFetch(url.startsWith(API) ? url.slice(API.length) : url);
+  if (f.data) return f.data;
+  const r = f.res;
   if (r.status === 404) throw new Error('Match nicht gefunden. Stimmt die ID, und ist das Match öffentlich?');
   if (r.status === 429) throw new Error('OpenDota-Limit erreicht. Bitte in einer Minute noch einmal versuchen.');
   if (!r.ok) throw new Error('OpenDota antwortet mit Fehler ' + r.status + '.');
   return r.json();
 }
 async function loadConstants() {
-  if (!heroes) heroes = await getJSON(API + '/constants/heroes');
+  if (!heroes) {
+    try { heroes = await getJSON(API + '/constants/heroes'); store.set('drv.heroes', heroes); }
+    catch (e) { heroes = store.get('drv.heroes'); if (!heroes) throw e; } // notfalls die zuletzt geladene Liste
+  }
   if (!patches) patches = await getJSON(API + '/constants/patch').catch(() => []);
 }
 const hero = id => (heroes && heroes[id]) || { localized_name: 'Held ' + id, img: '', icon: '' };
@@ -1619,9 +1662,9 @@ async function odGet(path, signal) {
     if (slot > Date.now()) await sleep(slot - Date.now());
     if (signal && signal.aborted) throw new Error('abgebrochen');
     odCall = Date.now();
-    let r;
-    try { r = await fetch(API + path, { signal }); }
-    catch (e) { throw new Error(signal && signal.aborted ? 'abgebrochen' : OD_DOWN); }
+    const f = await odFetch(path, signal);
+    if (f.data) return f.data;
+    const r = f.res;
     if (r.status === 429 && tries < 4) { odSlot = Date.now() + 20000; continue; }
     if (!r.ok) throw new Error('OpenDota antwortet mit Fehler ' + r.status);
     return r.json();
@@ -1665,7 +1708,7 @@ async function lgCrawl(id, extra, teams, force, bg) {
   const progress = () => {
     const sec = waiting && odCall ? Math.round((Date.now() - odCall) / 1000) : 0;
     setStatus('lgStatus', 'Suche Liga-Spiele … ' + checked + ' Abrufe erledigt, ' + Object.keys(idx.m).length + ' Matches gefunden'
-      + (found ? ' (' + found + ' neu)' : '') + (sec >= 3 ? '. OpenDota antwortet langsam, warte seit ' + sec + ' s …' : '. Das kann ein paar Minuten dauern.'));
+      + (found ? ' (' + found + ' neu)' : '') + (viaStratz() ? ' (OpenDota gestört, Daten kommen von STRATZ)' : '') + (sec >= 3 ? '. OpenDota antwortet langsam, warte seit ' + sec + ' s …' : '. Das kann ein paar Minuten dauern.'));
   };
   const ticker = setInterval(() => { if (waiting) progress(); }, 1000);
   const verify = async mid => {
