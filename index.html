@@ -92,6 +92,19 @@
   details.league { margin-top: 12px; }
   details.league summary { cursor: pointer; font-family: var(--font-head, inherit); letter-spacing: .06em; text-transform: uppercase; color: var(--accent, inherit); }
   details.league form { margin-top: 10px; }
+  .prog { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .prog-bar { flex: 1; height: 12px; padding: 2px; background: var(--panel-bd);
+    clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%); }
+  .prog-track { height: 100%; background: var(--input-bg); clip-path: inherit; overflow: hidden; }
+  .prog-track i { display: block; height: 100%; width: 0; transition: width .4s ease;
+    background: repeating-linear-gradient(-45deg, rgba(255,255,255,.22) 0 5px, transparent 5px 10px) 0 0 / 28px 100%,
+      linear-gradient(90deg, var(--accent), var(--accent-hi)); box-shadow: var(--glow);
+    animation: prog-run .8s linear infinite; }
+  .prog.done .prog-track i { animation: none; background: linear-gradient(90deg, var(--accent), var(--accent-hi)); }
+  @keyframes prog-run { to { background-position: 28px 0, 0 0; } }
+  .prog-pct { min-width: 3.2em; text-align: right; font: 700 15px/1 var(--font-head); letter-spacing: .08em;
+    color: var(--accent); font-variant-numeric: tabular-nums; text-shadow: var(--glow); }
+  @media (prefers-reduced-motion: reduce) { .prog-track i { animation: none; transition: none; } }
   .lg-auto { display: flex; gap: 8px; align-items: center; margin-top: 8px; cursor: pointer; }
   form, .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   input[type=text], input[type=password], select { padding: 10px 12px; font: 16px/1.3 var(--font-body); min-width: 0;
@@ -339,6 +352,9 @@
           <button type="button" id="lgUpdate" class="secondary" hidden>Alle übernommenen aktualisieren</button>
         </form>
         <label class="small lg-auto"><input type="checkbox" id="lgAuto" checked> Neue Liga-Spiele der übernommenen Gegner automatisch holen (beim Öffnen und alle 6 Stunden)</label>
+        <div id="lgProg" class="prog" hidden role="progressbar" aria-label="Fortschritt" aria-valuemin="0" aria-valuemax="100">
+          <div class="prog-bar"><div class="prog-track"><i id="lgProgFill"></i></div></div><span id="lgProgPct" class="prog-pct">0 %</span>
+        </div>
         <div id="lgStatus" class="status muted small"></div>
         <div class="list short" id="lgList" hidden><table>
           <thead><tr><th>Team</th><th>Matches</th><th>Bilanz</th><th>Bei euch</th><th></th></tr></thead>
@@ -1693,13 +1709,14 @@ function lgShow(id, idx) {
 }
 /* Liga-Spiele einsammeln: Start-Matches prüfen, dann in den Lobby-Spielen der beteiligten Spieler
    nach weiteren Matches derselben Liga suchen, bis nichts Neues mehr dazukommt. */
-async function lgCrawl(id, extra, teams, force, bg) {
+async function lgCrawl(id, extra, teams, force, bg, onProg) {
   // Eine Hintergrund-Suche macht Platz, sobald jemand selbst etwas sucht; eine eigene Suche wird abgewartet.
   if (lgBusy && lgBusyBg && !bg) { lgStop = true; if (lgCtl) lgCtl.abort(); }
   while (lgBusy) await sleep(300);
   lgBusy = true; lgBusyBg = !!bg; lgStop = false; $('lgBtn').disabled = true;
   lgCtl = bg ? new AbortController() : null;
   const sig = lgCtl ? lgCtl.signal : undefined;
+  const prog = p => { if (onProg) onProg(p); };
   const idx = store.get(lgKey(id)) || { name: null, m: {}, no: [], p: {} };
   const no = new Set(idx.no.map(String));
   const save = () => { idx.no = [...no]; store.set(lgKey(id), idx); };
@@ -1734,7 +1751,9 @@ async function lgCrawl(id, extra, teams, force, bg) {
   try {
     const seeds = new Set([...(LEAGUE_SEEDS[id] || []), ...extra]);
     opps.forEach(o => o.matches.forEach(x => { const sl = memCache.get(String(x.id)); if (sl && String(sl.lg) === id) seeds.add(String(x.id)); }));
-    for (const mid of seeds) { if (lgStop) return false; await verify(mid); }
+    let si = 0;
+    for (const mid of seeds) { if (lgStop) return false; await verify(mid); prog(15 * ++si / seeds.size); }
+    prog(15);
     if (!Object.keys(idx.m).length) {
       setStatus('lgStatus', 'Keine Matches dieser Liga gefunden. Trag im zweiten Feld eine oder mehrere Match-IDs aus der Liga ein (z. B. von Dotabuff).', true);
       return;
@@ -1763,17 +1782,23 @@ async function lgCrawl(id, extra, teams, force, bg) {
           .slice(0, Math.max(0, LG_PER_TEAM - ok)).forEach(a => { if (!todo.includes(a)) todo.push(a); });
       });
       if (!todo.length) break;
-      for (const aid of todo) {
+      // Fortschritt: erste Runde 15–75 %, weitere Runden bis 85 %.
+      const [p0, p1] = round === 0 ? [15, 75] : [75 + 5 * (round - 1), 80 + 5 * (round - 1)];
+      for (const [ti, aid] of todo.entries()) {
         if (lgStop) return false;
         done.add(aid);
         let list = null;
         waiting = true;
         try { list = await odGet('/players/' + aid + '/matches?lobby_type=1&date=' + LG_DAYS, sig); } catch (e) { errors++; } finally { waiting = false; }
         checked++; progress();
-        for (const x of list || []) {
+        const cand = (list || []).filter(x => (x.start_time || 0) >= from && (!x.game_mode || modes.has(x.game_mode)));
+        prog(p0 + (p1 - p0) * ti / todo.length);
+        for (const [ci, x] of cand.entries()) {
           if (lgStop) return false;
-          if ((x.start_time || 0) >= from && (!x.game_mode || modes.has(x.game_mode))) await verify(x.match_id);
+          await verify(x.match_id);
+          prog(p0 + (p1 - p0) * (ti + (ci + 1) / cand.length) / todo.length);
         }
+        prog(p0 + (p1 - p0) * (ti + 1) / todo.length);
         if (list) idx.p[aid] = Date.now(); // erst als geprüft merken, wenn alles durch ist
         save();
       }
@@ -1861,18 +1886,19 @@ $('lgForm').addEventListener('submit', e => {
 });
 /* Neue Spiele aller übernommenen Gegner suchen und ergänzen. force = Spieler auch dann prüfen,
    wenn sie in den letzten 6 Stunden schon geprüft wurden. Ergebnis: Zahl neuer Matches und Gegner, -1 bei Fehler. */
-async function lgUpdateAll(id, force, bg) {
+async function lgUpdateAll(id, force, bg, onProg) {
   const idx = store.get(lgKey(id));
   if (idx && (!lgData || String(lgData.league.id) !== id)) lgShow(id, idx);
   // Team-IDs der übernommenen Gegner, auch wenn die Liga in diesem Browser noch nie geladen wurde.
   const tids = new Set(opps.flatMap(o => o.matches.map(x => x.tid)).filter(Boolean).map(Number));
   if (lgData) lgData.teams.forEach(t => { if (lgOpp(t)) tids.add(Number(t.id)); });
   if (!tids.size) return { total: 0, teams: 0 };
-  const res = await lgCrawl(id, [], [...tids], force, bg);
+  const res = await lgCrawl(id, [], [...tids], force, bg, onProg);
   if (res === false) return { total: 0, teams: 0, stopped: true };
   let total = 0, teams = 0;
-  for (const t of (lgData ? lgData.teams : [])) {
-    if (!lgOpp(t)) continue;
+  const own = (lgData ? lgData.teams : []).filter(t => lgOpp(t));
+  for (const [k, t] of own.entries()) {
+    if (onProg) onProg(85 + 15 * k / own.length);
     const n = await lgTake(t, false, true);
     if (n < 0) return { total, teams, failed: true };
     if (n > 0) { total += n; teams++; }
@@ -1882,16 +1908,34 @@ async function lgUpdateAll(id, force, bg) {
   store.set(lgAutoKey(id) + '.retry', res === true ? 0 : Date.now() + 30 * 60 * 1000);
   return { total, teams, errors: res !== true };
 }
+/* Fortschrittsbalken für „Alle übernommenen aktualisieren“. Der Wert läuft nur vorwärts. */
+let lgProgVal = 0, lgProgHide = 0;
+function lgProg(p) {
+  const box = $('lgProg');
+  if (p === 0) { clearTimeout(lgProgHide); lgProgVal = 0; box.hidden = false; box.classList.remove('done'); }
+  lgProgVal = Math.max(lgProgVal, Math.min(100, p));
+  const v = Math.floor(lgProgVal);
+  $('lgProgFill').style.width = lgProgVal + '%';
+  $('lgProgPct').textContent = v + ' %';
+  box.setAttribute('aria-valuenow', v);
+}
+function lgProgEnd(ok) {
+  if (ok) $('lgProg').classList.add('done');
+  lgProgHide = setTimeout(() => { $('lgProg').hidden = true; }, ok ? 2500 : 0);
+}
 $('lgUpdate').addEventListener('click', async () => {
   if (!lgData) return;
   $('lgUpdate').disabled = true;
+  lgProg(0);
+  let ok = false;
   try {
     setStatus('lgStatus', 'Suche neue Spiele der übernommenen Gegner …');
-    const r = await lgUpdateAll(String(lgData.league.id), true);
-    if (r.failed) return;
+    const r = await lgUpdateAll(String(lgData.league.id), true, false, lgProg);
+    if (r.failed || r.stopped) return;
+    ok = true; lgProg(100);
     setStatus('lgStatus', r.total ? r.total + ' neue Match(es) bei ' + r.teams + ' Gegner(n) ergänzt.' : 'Alle übernommenen Gegner sind aktuell.');
     lgAutoShow(String(lgData.league.id));
-  } finally { $('lgUpdate').disabled = false; }
+  } finally { $('lgUpdate').disabled = false; lgProgEnd(ok); }
 });
 
 /* Automatisch: beim Öffnen der Gegner und danach regelmäßig, höchstens alle 6 Stunden pro Team und Browser.
