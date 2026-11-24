@@ -544,8 +544,11 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
+const OD_DOWN = 'OpenDota ist gerade nicht erreichbar (Störung bei OpenDota, nicht bei dieser Seite). Bitte später noch einmal versuchen.';
 async function getJSON(url) {
-  const r = await fetch(url);
+  let r;
+  try { r = await fetch(url); } catch (e) { throw new Error(OD_DOWN); }
+  if (r.status >= 500) throw new Error(OD_DOWN);
   if (r.status === 404) throw new Error('Match nicht gefunden. Stimmt die ID, und ist das Match öffentlich?');
   if (r.status === 429) throw new Error('OpenDota-Limit erreicht. Bitte in einer Minute noch einmal versuchen.');
   if (!r.ok) throw new Error('OpenDota antwortet mit Fehler ' + r.status + '.');
@@ -1602,15 +1605,23 @@ const LG_DAYS = 150;            // so weit zurück werden Spielerhistorien durch
 const LG_TTL = 6 * 3600 * 1000; // Spieler höchstens alle 6 Stunden erneut prüfen (außer per Knopf)
 const LG_PER_TEAM = 2;          // pro Team und Suchlauf so viele Spieler prüfen
 let lgBusy = false;
+let lgBusyBg = false; // läuft gerade die automatische Suche im Hintergrund?
+let lgStop = false;   // Hintergrund-Suche abbrechen, weil jemand etwas angeklickt hat
+let lgCtl = null;     // bricht laufende Abrufe der Hintergrund-Suche sofort ab
 
 /* OpenDota erlaubt ohne Schlüssel etwa 60 Abrufe pro Minute; deshalb höchstens einer pro Sekunde. */
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let odSlot = 0;
-async function odGet(path) {
+let odCall = 0; // Startzeit des laufenden Abrufs (für die Anzeige)
+async function odGet(path, signal) {
   for (let tries = 0; ; tries++) {
     const slot = Math.max(Date.now(), odSlot); odSlot = slot + 1050;
     if (slot > Date.now()) await sleep(slot - Date.now());
-    const r = await fetch(API + path);
+    if (signal && signal.aborted) throw new Error('abgebrochen');
+    odCall = Date.now();
+    let r;
+    try { r = await fetch(API + path, { signal }); }
+    catch (e) { throw new Error(signal && signal.aborted ? 'abgebrochen' : OD_DOWN); }
     if (r.status === 429 && tries < 4) { odSlot = Date.now() + 20000; continue; }
     if (!r.ok) throw new Error('OpenDota antwortet mit Fehler ' + r.status);
     return r.json();
@@ -1639,20 +1650,30 @@ function lgShow(id, idx) {
 }
 /* Liga-Spiele einsammeln: Start-Matches prüfen, dann in den Lobby-Spielen der beteiligten Spieler
    nach weiteren Matches derselben Liga suchen, bis nichts Neues mehr dazukommt. */
-async function lgCrawl(id, extra, teams, force) {
-  while (lgBusy) await sleep(300); // laufende Suche erst abwarten
-  lgBusy = true; $('lgBtn').disabled = true;
+async function lgCrawl(id, extra, teams, force, bg) {
+  // Eine Hintergrund-Suche macht Platz, sobald jemand selbst etwas sucht; eine eigene Suche wird abgewartet.
+  if (lgBusy && lgBusyBg && !bg) { lgStop = true; if (lgCtl) lgCtl.abort(); }
+  while (lgBusy) await sleep(300);
+  lgBusy = true; lgBusyBg = !!bg; lgStop = false; $('lgBtn').disabled = true;
+  lgCtl = bg ? new AbortController() : null;
+  const sig = lgCtl ? lgCtl.signal : undefined;
   const idx = store.get(lgKey(id)) || { name: null, m: {}, no: [], p: {} };
   const no = new Set(idx.no.map(String));
   const save = () => { idx.no = [...no]; store.set(lgKey(id), idx); };
   let checked = 0, found = 0, errors = 0;
-  const progress = () => setStatus('lgStatus', 'Suche Liga-Spiele … ' + checked + ' Abrufe, ' + Object.keys(idx.m).length + ' Matches gefunden'
-    + (found ? ' (' + found + ' neu)' : '') + '. Das kann beim ersten Mal ein paar Minuten dauern.');
+  let waiting = false; // läuft gerade ein Abruf bei OpenDota?
+  const progress = () => {
+    const sec = waiting && odCall ? Math.round((Date.now() - odCall) / 1000) : 0;
+    setStatus('lgStatus', 'Suche Liga-Spiele … ' + checked + ' Abrufe erledigt, ' + Object.keys(idx.m).length + ' Matches gefunden'
+      + (found ? ' (' + found + ' neu)' : '') + (sec >= 3 ? '. OpenDota antwortet langsam, warte seit ' + sec + ' s …' : '. Das kann ein paar Minuten dauern.'));
+  };
+  const ticker = setInterval(() => { if (waiting) progress(); }, 1000);
   const verify = async mid => {
     mid = String(mid);
     if (idx.m[mid] || no.has(mid)) return;
     let raw;
-    try { raw = await odGet('/matches/' + mid); } catch (e) { errors++; return; } finally { checked++; progress(); }
+    waiting = true;
+    try { raw = await odGet('/matches/' + mid, sig); } catch (e) { errors++; return; } finally { waiting = false; checked++; progress(); }
     if (!raw || String(raw.leagueid) !== id) { no.add(mid); return; }
     idx.name = (raw.league && raw.league.name) || idx.name;
     idx.m[mid] = { s: raw.start_time || 0, rw: raw.radiant_win ? 1 : 0,
@@ -1670,7 +1691,7 @@ async function lgCrawl(id, extra, teams, force) {
   try {
     const seeds = new Set([...(LEAGUE_SEEDS[id] || []), ...extra]);
     opps.forEach(o => o.matches.forEach(x => { const sl = memCache.get(String(x.id)); if (sl && String(sl.lg) === id) seeds.add(String(x.id)); }));
-    for (const mid of seeds) await verify(mid);
+    for (const mid of seeds) { if (lgStop) return false; await verify(mid); }
     if (!Object.keys(idx.m).length) {
       setStatus('lgStatus', 'Keine Matches dieser Liga gefunden. Trag im zweiten Feld eine oder mehrere Match-IDs aus der Liga ein (z. B. von Dotabuff).', true);
       return;
@@ -1700,22 +1721,29 @@ async function lgCrawl(id, extra, teams, force) {
       });
       if (!todo.length) break;
       for (const aid of todo) {
+        if (lgStop) return false;
         done.add(aid);
-        let list = [];
-        try { list = await odGet('/players/' + aid + '/matches?lobby_type=1&date=' + LG_DAYS); } catch (e) { errors++; }
+        let list = null;
+        waiting = true;
+        try { list = await odGet('/players/' + aid + '/matches?lobby_type=1&date=' + LG_DAYS, sig); } catch (e) { errors++; } finally { waiting = false; }
         checked++; progress();
-        idx.p[aid] = Date.now();
-        for (const x of list || []) if ((x.start_time || 0) >= from && (!x.game_mode || modes.has(x.game_mode))) await verify(x.match_id);
+        for (const x of list || []) {
+          if (lgStop) return false;
+          if ((x.start_time || 0) >= from && (!x.game_mode || modes.has(x.game_mode))) await verify(x.match_id);
+        }
+        if (list) idx.p[aid] = Date.now(); // erst als geprüft merken, wenn alles durch ist
         save();
       }
     }
     const n = Object.keys(idx.m).length;
     setStatus('lgStatus', (idx.name || 'Liga ' + id) + ': ' + lgTeams(idx).length + ' Teams, ' + n + ' Matches'
       + (found ? ', davon ' + found + ' neu gefunden.' : '. Keine neuen Spiele.')
-      + (errors ? ' ' + errors + ' Abruf(e) fehlgeschlagen, bitte später erneut suchen.' : ''), errors > 0);
+      + (errors ? ' ' + errors + ' Abruf(e) bei OpenDota fehlgeschlagen (OpenDota gestört oder überlastet), bitte später erneut suchen.' : ''), errors > 0);
+    return errors ? 'errors' : true;
   } finally {
     save(); store.set('drv.league', id);
-    lgBusy = false; $('lgBtn').disabled = false;
+    clearInterval(ticker);
+    lgBusy = false; lgBusyBg = false; lgCtl = null; $('lgBtn').disabled = false;
     if (Object.keys(idx.m).length) lgShow(id, idx);
   }
 }
@@ -1751,9 +1779,15 @@ function renderLeague() {
 /* Team als Gegner anlegen bzw. fehlende Matches ergänzen. Die Seite des Gegners kommt aus den Ligadaten. */
 async function lgTake(t, open, skipSearch) {
   if (!skipSearch && lgData) {
+    // Erst sofort mit den bekannten Spielen anlegen bzw. öffnen, danach in Ruhe nach neuen suchen.
+    const first = await lgTake(t, open, true);
+    if (first < 0) return first;
     setStatus('lgStatus', 'Suche neue Spiele von „' + t.name + '“ …');
-    await lgCrawl(String(lgData.league.id), [], [t.id], true);
+    const res = await lgCrawl(String(lgData.league.id), [], [t.id], true);
     t = (lgData.teams.find(x => x.id === t.id)) || t;
+    const more = await lgTake(t, false, true);
+    if (more === 0 && res === true) setStatus('lgStatus', '„' + t.name + '“ ist aktuell' + (first > 0 ? ' (' + first + ' Match(es) übernommen).' : '.'));
+    return more < 0 ? more : first + more;
   }
   let o = lgOpp(t);
   const fresh = !o;
@@ -1784,14 +1818,15 @@ $('lgForm').addEventListener('submit', e => {
 });
 /* Neue Spiele aller übernommenen Gegner suchen und ergänzen. force = Spieler auch dann prüfen,
    wenn sie in den letzten 6 Stunden schon geprüft wurden. Ergebnis: Zahl neuer Matches und Gegner, -1 bei Fehler. */
-async function lgUpdateAll(id, force) {
+async function lgUpdateAll(id, force, bg) {
   const idx = store.get(lgKey(id));
   if (idx && (!lgData || String(lgData.league.id) !== id)) lgShow(id, idx);
   // Team-IDs der übernommenen Gegner, auch wenn die Liga in diesem Browser noch nie geladen wurde.
   const tids = new Set(opps.flatMap(o => o.matches.map(x => x.tid)).filter(Boolean).map(Number));
   if (lgData) lgData.teams.forEach(t => { if (lgOpp(t)) tids.add(Number(t.id)); });
   if (!tids.size) return { total: 0, teams: 0 };
-  await lgCrawl(id, [], [...tids], force);
+  const res = await lgCrawl(id, [], [...tids], force, bg);
+  if (res === false) return { total: 0, teams: 0, stopped: true };
   let total = 0, teams = 0;
   for (const t of (lgData ? lgData.teams : [])) {
     if (!lgOpp(t)) continue;
@@ -1799,8 +1834,10 @@ async function lgUpdateAll(id, force) {
     if (n < 0) return { total, teams, failed: true };
     if (n > 0) { total += n; teams++; }
   }
+  // Bei Störungen von OpenDota schon nach 30 Minuten erneut versuchen statt nach 6 Stunden.
   store.set(lgAutoKey(id), Date.now());
-  return { total, teams };
+  store.set(lgAutoKey(id) + '.retry', res === true ? 0 : Date.now() + 30 * 60 * 1000);
+  return { total, teams, errors: res !== true };
 }
 $('lgUpdate').addEventListener('click', async () => {
   if (!lgData) return;
@@ -1818,30 +1855,33 @@ $('lgUpdate').addEventListener('click', async () => {
    Gespeichert wird in der gemeinsamen Datenbank, also sehen alle im Team die neuen Matches. */
 const LG_AUTO_EVERY = 6 * 3600 * 1000;
 const lgAutoKey = id => 'drv.lgAuto.' + id + '.' + (SHARED ? (spaceName || '-').toLowerCase() : 'local');
-let lgAutoRunning = false, lgAutoNote = '';
+let lgAutoRunning = false, lgAutoNote = '', lgAutoPause = 0;
 const lgAutoOn = () => store.get('drv.lgAutoOff') !== true;
 const hhmm = t => new Date(t).toLocaleString('de-DE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+const lgAutoNext = id => store.get(lgAutoKey(id) + '.retry') || ((store.get(lgAutoKey(id)) || 0) + LG_AUTO_EVERY);
 function lgAutoShow(id) {
   const last = store.get(lgAutoKey(id)) || 0;
   const linked = opps.some(o => o.matches.some(x => x.tid));
   $('lgAutoInfo').textContent = !linked ? ''
     : !lgAutoOn() ? 'Automatische Liga-Aktualisierung ist aus.'
     : lgAutoRunning ? 'Suche im Hintergrund nach neuen Liga-Spielen der Gegner …'
-    : (lgAutoNote ? lgAutoNote + ' ' : '') + (last ? 'Liga-Spiele zuletzt geprüft: ' + hhmm(last) + ', nächste Prüfung ab ' + hhmm(last + LG_AUTO_EVERY) + '.' : '');
+    : (lgAutoNote ? lgAutoNote + ' ' : '') + (last ? 'Liga-Spiele zuletzt geprüft: ' + hhmm(last) + ', nächste Prüfung ab ' + hhmm(lgAutoNext(id)) + '.' : '');
 }
 async function lgAuto() {
   const id = store.get('drv.league') || DEFAULT_LEAGUE;
   if (lgAutoRunning) return;
   if (SHARED && (!loggedIn() || (isAdmin && !spaceName))) { $('lgAutoInfo').textContent = ''; return; }
   if (!lgAutoOn() || !opps.some(o => o.matches.some(x => x.tid))
-      || Date.now() - (store.get(lgAutoKey(id)) || 0) < LG_AUTO_EVERY) return lgAutoShow(id);
+      || Date.now() < lgAutoNext(id) || Date.now() < lgAutoPause) return lgAutoShow(id);
   lgAutoRunning = true; lgAutoNote = ''; lgAutoShow(id);
   const team = spaceName;
   try {
-    const r = await lgUpdateAll(id, false);
+    const r = await lgUpdateAll(id, false, true);
+    if (r.stopped) { lgAutoPause = Date.now() + 10 * 60 * 1000; return; } // abgebrochen: in 10 Minuten neu versuchen
     if (team !== spaceName) return; // inzwischen anderes Team geöffnet
     lgAutoNote = r.failed ? 'Automatische Aktualisierung fehlgeschlagen.'
-      : r.total ? 'Automatisch ' + r.total + ' neue(s) Match(es) bei ' + r.teams + ' Gegner(n) ergänzt.' : '';
+      : r.total ? 'Automatisch ' + r.total + ' neue(s) Match(es) bei ' + r.teams + ' Gegner(n) ergänzt.'
+      : r.errors ? 'OpenDota war bei der letzten Prüfung nicht erreichbar.' : '';
   } catch (e) {
     lgAutoNote = 'Automatische Aktualisierung fehlgeschlagen: ' + e.message;
   } finally { lgAutoRunning = false; lgAutoShow(id); }
@@ -1859,7 +1899,7 @@ $('lgBox').addEventListener('toggle', () => {
   if (!id) return;
   const idx = store.get(lgKey(id));
   if (idx) lgShow(id, idx);
-  lgCrawl(id, [], [], false); // beim Aufklappen nur die Startpunkte prüfen (beim zweiten Mal sofort fertig)
+  lgCrawl(id, [], [], false, true); // beim Aufklappen nur die Startpunkte prüfen, ohne andere Suchen zu stören
 });
 
 /* ---------- Start ---------- */
